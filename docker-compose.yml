@@ -3,7 +3,7 @@ services:
     build: .
     image: ddwrt-portal:dev
     restart: unless-stopped
-    # Loopback only: the portal has no login of its own yet.
+    # Loopback only: the portal serves plain HTTP.
     ports:
       - "127.0.0.1:8080:8080"
     environment:

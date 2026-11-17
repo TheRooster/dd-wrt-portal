@@ -12,7 +12,24 @@ password is used once to install the portal's SSH public key
 (`sshd_authorized_keys` in nvram) and is never stored. After that the portal
 logs in with its own key and pins the router's SSH host key.
 
-The portal has no login of its own yet, so it is published on loopback only.
+## Signing in
+
+The dashboard can be viewed without signing in. Every other page, and every
+request that changes anything, needs a signed-in user. Routes are refused by
+default: only the paths listed in `app/auth.py` are open.
+
+A new database gets one user, `admin` with password `admin` (`DEFAULT_USER`,
+`DEFAULT_PASSWORD`). That password must be changed at first sign-in; until
+then the account can reach nothing but the change-password page. Sign in and
+change it straight after the first start. More users are added on the Account
+page, each with the same forced change. All users have full access.
+
+Passwords are stored as salted scrypt hashes. Five wrong passwords lock that
+user name for five minutes. Sessions last `SESSION_HOURS`; changing a
+password or removing a user ends that user's sessions.
+
+The portal serves plain HTTP, so it is still published on loopback only. Put
+it behind a TLS-terminating proxy before exposing it to a network.
 
 ## Managed settings
 
@@ -77,6 +94,18 @@ combination and picks the one with the least interference while keeping the
 fleet's own routers on separate channels. It only recommends; channels are
 set on the Managed settings page.
 
+## Alerts and logs
+
+An alert opens when a router is silent for `ALERT_OFFLINE_AFTER` seconds,
+differs from the managed settings, or has Telnet or SSH password login on. It
+clears by itself. Open alerts show on the dashboard; the Alerts page keeps the
+history. If `ALERT_WEBHOOK` is set, each change is posted to it as
+`{"text": "..."}`, the format Slack-compatible webhooks accept.
+
+Each router card links to its logs, read over SSH on request and not stored.
+The system log needs "System log" switched on in Managed settings; the kernel
+log is always there.
+
 ## State
 
 Everything lives in the `/data` volume: `portal.db` (SQLite), `id_ed25519`
@@ -115,6 +144,11 @@ unreadable.
 | `FIRMWARE_MAX_JUMP_DAYS` | `62` | Days between running and requested build before a warning |
 | `FIRMWARE_WRITE_TIMEOUT` | `900` | Seconds allowed for the router to write an image |
 | `FIRMWARE_BOOT_TIMEOUT` | `600` | Seconds allowed for the router to boot the new build |
+| `SESSION_HOURS` | `168` | Hours a sign-in lasts |
+| `DEFAULT_USER` | `admin` | User created with a new database |
+| `DEFAULT_PASSWORD` | `admin` | Its first password; must be changed at first sign-in |
+| `ALERT_OFFLINE_AFTER` | `300` | Seconds of silence before an offline alert |
+| `ALERT_WEBHOOK` | unset | URL that receives alert changes as `{"text": ...}` |
 | `BACKUP_KEEP` | `200` | Stored backups kept per router |
 | `BACKUP_KEY` | generated | Fernet key for encrypting stored backups |
 | `SSH_CONNECT_TIMEOUT` | `10` | Seconds |

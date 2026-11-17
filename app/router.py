@@ -310,3 +310,18 @@ async def flash_result(dev):
 async def survey(dev, script):
     """Run a site survey on every radio. Clients may pause for a second or two."""
     return await run(dev, script, timeout=120)
+
+
+LOG_LINES = 200
+LOGS_SCRIPT = (
+    f'echo "syslog=$(nvram get syslogd_enable)"; echo "@@system"; tail -n {LOG_LINES} /var/log/messages 2>/dev/null; '
+    f'echo "@@kernel"; dmesg | tail -n {LOG_LINES}; true'
+)
+
+
+async def logs(dev):
+    """Recent system and kernel log lines: {syslog_on, system, kernel}."""
+    out = await run(dev, LOGS_SCRIPT)
+    head, _, rest = out.partition("@@system\n")
+    system, _, kernel = rest.partition("@@kernel\n")
+    return {"syslog_on": "syslog=1" in head, "system": system.strip(), "kernel": kernel.strip()}

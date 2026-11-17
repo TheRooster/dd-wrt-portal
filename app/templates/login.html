@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block main %}
+  <section class="panel narrow">
+    <h2>Sign in</h2>
+    <p class="hint">Signing in is needed to change anything and to see backups, settings and logs.</p>
+    <form method="post" action="/login" class="stack">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>User name
+        <input name="username" required autofocus autocomplete="username" autocapitalize="none" value="{{ username }}">
+      </label>
+      <label>Password
+        <input name="password" type="password" required autocomplete="current-password">
+      </label>
+      <button>Sign in</button>
+    </form>
+  </section>
+{% endblock %}

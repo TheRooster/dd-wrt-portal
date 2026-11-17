@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block main %}
+  <section class="panel narrow">
+    <h2>Change the password for {{ user.username }}</h2>
+    {% if user.must_change %}<p class="notice busy">This account still has the password it was created with. Choose a new one to continue.</p>{% endif %}
+    <p class="hint">Changing it signs this user out everywhere else. Use at least {{ min_length }} characters.</p>
+    <form method="post" action="/account/password" class="stack">
+      <label>Current password
+        <input name="current" type="password" required autocomplete="current-password">
+      </label>
+      <label>New password
+        <input name="password" type="password" required autocomplete="new-password">
+      </label>
+      <label>New password again
+        <input name="again" type="password" required autocomplete="new-password">
+      </label>
+      <button>Change password</button>
+    </form>
+  </section>
+
+  {% if not user.must_change %}
+  <section class="panel">
+    <h2>Users</h2>
+    <p class="hint">Every user can do everything in the portal. A new user must change the password given here at first sign-in.</p>
+    <table class="list managed">
+      <thead><tr><th>User name</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.username }}{% if u.id == user.id %} <span class="dim">(you)</span>{% endif %}</td>
+          <td>{% if u.must_change %}<span class="flag">Password not changed yet</span>{% else %}<span class="dim">Active</span>{% endif %}</td>
+          <td class="num">{% if u.id != user.id %}<form method="post" action="/users/{{ u.id }}/delete" class="inline-form"><button class="quiet">Remove</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/users" class="match" autocomplete="off">
+      <label>User name <input name="username" required maxlength="32" autocapitalize="none"></label>
+      <label>First password <input name="password" type="password" required autocomplete="new-password"></label>
+      <label>Again <input name="again" type="password" required autocomplete="new-password"></label>
+      <button class="secondary">Add user</button>
+    </form>
+  </section>
+  {% endif %}
+{% endblock %}

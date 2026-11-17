@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Logs · {{ label }}{% endblock %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / {{ label }} / Logs</p>
+  <div class="page-head">
+    <h2>Logs from {{ label }}</h2>
+    <a class="button" href="/devices/{{ dev.id }}/logs">Refresh</a>
+  </div>
+  <p class="hint">Read from the router just now; the portal does not store logs. The last {{ lines }} lines of each are shown. Logs live in the router's memory and are lost when it reboots.</p>
+
+  <h3>System log</h3>
+  {% if system %}<pre>{{ system }}</pre>
+  {% elif syslog_on %}<p class="empty">The system log is empty.</p>
+  {% else %}<p class="notice busy">The system log is switched off on this router. Turn on "System log" on the <a href="/settings">Managed settings</a> page to collect it.</p>{% endif %}
+
+  <h3>Kernel log</h3>
+  {% if kernel %}<pre>{{ kernel }}</pre>{% else %}<p class="empty">The kernel log is empty.</p>{% endif %}
+{% endblock %}

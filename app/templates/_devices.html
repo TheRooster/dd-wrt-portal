@@ -1,3 +1,6 @@
+{% if alerts %}
+<p class="notice bad" role="alert"><a href="/alerts">{{ alerts|length }} open alert{{ "s" if alerts|length != 1 }}</a>: {% for a in alerts %}{{ a.message }}{{ " " if not loop.last }}{% endfor %}</p>
+{% endif %}
 {% if devices %}
 <p class="summary">
   <span><strong>{{ online }}</strong> of {{ devices|length }} online</span>
@@ -64,7 +67,8 @@
     </p>
 
     <footer>
-      <span class="dim">Checked {{ d.last_poll|ago }}{% if s and d.mapped %} · <a href="/devices/{{ d.id }}/mapping">Mapping</a>{% endif %}</span>
+      <span class="dim">Checked {{ d.last_poll|ago }}{% if s and d.mapped %} · <a href="/devices/{{ d.id }}/mapping">Mapping</a>{% endif %}{% if d.online %} · <a href="/devices/{{ d.id }}/logs">Logs</a>{% endif %}</span>
+{% if request.state.authed %}
       <details class="confirm">
         <summary>Remove</summary>
         <form method="post" action="/devices/{{ d.id }}/delete">
@@ -74,6 +78,7 @@
           {% endif %}
         </form>
       </details>
+      {% endif %}
     </footer>
   </article>
 {% endfor %}

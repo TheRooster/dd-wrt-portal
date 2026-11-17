@@ -146,3 +146,7 @@ form.match label { font-size: 12px; color: var(--dim); }
 form.inline-form { display: inline; }
 input.build { width: 7.5em; }
 .bad-text { color: var(--bad); }
+.panel.narrow { max-width: 420px; margin: 40px auto; }
+form.stack { display: grid; gap: 12px; }
+form.stack label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
+.quiet-link { font-size: 14px; text-decoration: none; }

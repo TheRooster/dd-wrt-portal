@@ -62,6 +62,26 @@ CREATE TABLE IF NOT EXISTS managed (
     value TEXT NOT NULL,
     PRIMARY KEY (scope, key)
 );
+CREATE TABLE IF NOT EXISTS alerts (
+    id         INTEGER PRIMARY KEY,
+    device_id  INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,     -- offline | drift | telnet | ssh-password
+    message    TEXT NOT NULL,
+    raised_at  REAL NOT NULL,
+    cleared_at REAL               -- NULL while the condition holds
+);
+CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY,
+    username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password    TEXT NOT NULL,    -- salt:scrypt hash, both hex
+    must_change INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    key     TEXT PRIMARY KEY,     -- SHA-256 of the cookie's token
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS client_names (
     mac  TEXT PRIMARY KEY,        -- lower case
     name TEXT NOT NULL
@@ -94,9 +114,15 @@ def init():
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        if "user_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}:
+            conn.execute("DROP TABLE sessions")  # from before users existed; sessions are disposable
+            conn.executescript(SCHEMA)
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
         if "mapped" not in columns:  # databases created before settings mapping existed
             conn.execute("ALTER TABLE devices ADD COLUMN mapped INTEGER NOT NULL DEFAULT 1")
+    from . import auth  # here, not at the top: auth imports this module
+
+    auth.ensure_default_user()
 
 
 def _device(row):
@@ -346,3 +372,87 @@ def set_client_name(mac, name):
             )
         else:
             conn.execute("DELETE FROM client_names WHERE mac = ?", (mac,))
+
+
+# --- alerts -----------------------------------------------------------------------
+
+
+def open_alerts():
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM alerts WHERE cleared_at IS NULL ORDER BY raised_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def cleared_alerts(limit=50):
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM alerts WHERE cleared_at IS NOT NULL ORDER BY cleared_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def raise_alert(device_id, kind, message, at):
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO alerts (device_id, kind, message, raised_at) VALUES (?, ?, ?, ?)",
+            (device_id, kind, message, at),
+        )
+
+
+def clear_alert(alert_id, at):
+    with connect() as conn:
+        conn.execute("UPDATE alerts SET cleared_at = ? WHERE id = ?", (at, alert_id))
+
+
+# --- users and sign-in sessions --------------------------------------------------------
+
+
+def list_users():
+    with connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM users ORDER BY username")]
+
+
+def get_user(username):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    return dict(row) if row else None
+
+
+def add_user(username, password_hash, must_change):
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO users (username, password, must_change, created_at) VALUES (?, ?, ?, ?)",
+            (username, password_hash, int(must_change), time.time()),
+        )
+
+
+def set_user_password(user_id, password_hash):
+    """Store a new password hash and end all of the user's sessions."""
+    with connect() as conn:
+        conn.execute("UPDATE users SET password = ?, must_change = 0 WHERE id = ?", (password_hash, user_id))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+
+def delete_user(user_id):
+    with connect() as conn:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+def add_session(key, user_id, expires):
+    with connect() as conn:
+        conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
+        conn.execute("INSERT INTO sessions (key, user_id, expires) VALUES (?, ?, ?)", (key, user_id, expires))
+
+
+def session_user(key, now):
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id "
+            "WHERE sessions.key = ? AND sessions.expires > ?", (key, now),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_session(key):
+    with connect() as conn:
+        conn.execute("DELETE FROM sessions WHERE key = ?", (key,))

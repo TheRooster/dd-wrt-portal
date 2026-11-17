@@ -3,6 +3,7 @@
 {% block main %}
   <div id="devices">{% include "_devices.html" %}</div>
 
+  {% if request.state.authed %}
   <section class="panel">
     <h2>Add a router</h2>
     <p class="hint">The root password is used once to install the portal's SSH key on the router. It is not saved.</p>
@@ -21,6 +22,9 @@
       <pre>{{ public_key }}</pre>
     </details>
   </section>
+  {% else %}
+  <p class="hint">Sign in to add routers, change settings, or see backups and logs.</p>
+  {% endif %}
 {% endblock %}
 {% block script %}
 <script>

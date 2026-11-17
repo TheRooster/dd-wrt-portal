@@ -9,8 +9,11 @@
 <body>
 <header>
   <h1><a href="/">DD-WRT Portal</a></h1>
-  <nav><a href="/">Routers</a><a href="/clients">Clients</a><a href="/channels">Channels</a><a href="/settings">Managed settings</a><a href="/firmware">Firmware</a></nav>
-  {% block actions %}{% endblock %}
+  <nav><a href="/">Routers</a><a href="/clients">Clients</a><a href="/channels">Channels</a><a href="/settings">Managed settings</a><a href="/firmware">Firmware</a><a href="/alerts">Alerts</a></nav>
+  {% if request.state.authed %}{% block actions %}{% endblock %}
+  <a href="/account" class="quiet-link">{{ request.state.user.username }}</a>
+  <form method="post" action="/logout"><button class="quiet">Sign out</button></form>
+  {% else %}<a href="/login" class="button">Sign in</a>{% endif %}
 </header>
 <main>
   {% if msg %}<p class="notice ok" role="status">{{ msg }}</p>{% endif %}

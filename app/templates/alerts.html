@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block main %}
+  <h2>Alerts</h2>
+  <p class="hint">An alert opens when a router stops answering for {{ offline_after // 60 }} minutes, drifts from the managed settings, or has Telnet or SSH password login switched on. It clears by itself when the condition ends. {% if webhook %}Changes are also posted to the configured webhook.{% else %}Set <span class="mono">ALERT_WEBHOOK</span> to have changes posted to a chat or notification service.{% endif %}</p>
+
+  <h3>Open</h3>
+  {% if open %}
+  <ul class="facts">
+    {% for a in open %}<li class="warn">{{ a.message }} <span class="dim">Since <time datetime="{{ a.raised_at|iso }}">{{ a.raised_at|iso }}</time>.</span></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">Nothing open.</p>{% endif %}
+
+  {% if history %}
+  <h3>Cleared</h3>
+  <div class="panel flush scroll">
+    <table class="list managed">
+      <thead><tr><th>Alert</th><th>Opened</th><th>Cleared</th><th class="num">Lasted</th></tr></thead>
+      <tbody>
+      {% for a in history %}
+        <tr><td>{{ a.message }}</td><td><time datetime="{{ a.raised_at|iso }}">{{ a.raised_at|iso }}</time></td><td><time datetime="{{ a.cleared_at|iso }}">{{ a.cleared_at|iso }}</time></td><td class="num">{{ (a.cleared_at - a.raised_at)|duration }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

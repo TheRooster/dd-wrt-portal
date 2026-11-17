@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import backups, channels, config, db, firmware, nvram, profile, router, sync
+from . import alerts, auth, backups, channels, config, db, firmware, nvram, profile, router, sync
 
 log = logging.getLogger("portal")
 BASE = Path(__file__).parent
@@ -109,6 +109,7 @@ async def _poller():
     while True:
         try:
             await check_configs(await poll_all())
+            await alerts.notify(*alerts.evaluate(_context()["devices"]))
         except Exception:
             log.exception("poll cycle failed")
         await asyncio.sleep(config.POLL_INTERVAL)
@@ -160,6 +161,26 @@ async def same_origin_writes(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def require_sign_in(request: Request, call_next):
+    """Only the dashboard is open. Everything else needs a signed-in session."""
+    user = request.state.user = auth.session_user(request.cookies.get(auth.COOKIE))
+    request.state.authed = bool(user)
+    path = request.url.path
+    if auth.is_public(request.method, path):
+        return await call_next(request)
+    if user:
+        if user["must_change"] and path not in auth.PASSWORD_CHANGE:
+            return RedirectResponse("/account", status_code=303)
+        return await call_next(request)
+    if request.method in ("GET", "HEAD"):
+        back = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    else:  # after signing in, return to the page the button was on
+        referer = urlsplit(request.headers.get("referer", ""))
+        back = referer.path or "/"
+    return RedirectResponse("/login?" + urlencode({"next": auth.safe_next(back)}), status_code=303)
+
+
 def _context():
     devices = db.list_devices()
     summary = db.backup_summary()
@@ -182,6 +203,7 @@ def _context():
         "online": sum(d["online"] for d in devices),
         "clients": sum(d["status"]["clients"] for d in devices if d["online"]),
         "builds": sorted({d["status"]["build"] for d in devices if d["status"] and d["status"]["build"]}),
+        "alerts": db.open_alerts(),
     }
 
 
@@ -198,6 +220,91 @@ def _device_or_404(device_id):
 
 def _label(dev):
     return (dev["status"] or {}).get("name") or dev["host"]
+
+
+# --- signing in -----------------------------------------------------------------------
+
+
+def _login_page(request, next, err="", msg="", username="", status=200):
+    ctx = {"next": auth.safe_next(next), "err": err, "msg": msg, "username": username}
+    return templates.TemplateResponse(request, "login.html", ctx, status_code=status)
+
+
+@app.get("/login")
+async def login_page(request: Request, next: str = "/", msg: str = ""):
+    if request.state.authed:
+        return _back(auth.safe_next(next))
+    return _login_page(request, next, msg=msg)
+
+
+@app.post("/login")
+async def login(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+    username = username.strip()
+    if auth.locked_out(username):
+        return _login_page(request, next, "Too many wrong passwords for that user. Wait five minutes.", username=username, status=429)
+    user = auth.check_password(username, password)
+    if not user:
+        log.warning("failed sign-in from %s", request.client.host if request.client else "unknown")
+        return _login_page(request, next, "Wrong user name or password.", username=username, status=401)
+    response = _back("/account" if user["must_change"] else auth.safe_next(next))
+    response.set_cookie(
+        auth.COOKIE, auth.start_session(user["id"]), max_age=int(config.SESSION_HOURS * 3600),
+        httponly=True, samesite="lax", secure=request.url.scheme == "https",
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    auth.end_session(request.cookies.get(auth.COOKIE))
+    response = _back("/")
+    response.delete_cookie(auth.COOKIE)
+    return response
+
+
+@app.get("/account")
+async def account_page(request: Request, msg: str = "", err: str = ""):
+    ctx = {"user": request.state.user, "users": db.list_users(), "msg": msg, "err": err, "min_length": auth.MIN_LENGTH}
+    return templates.TemplateResponse(request, "account.html", ctx)
+
+
+@app.post("/account/password")
+async def change_password(request: Request, current: str = Form(...), password: str = Form(...), again: str = Form(...)):
+    user = request.state.user
+    if not auth.check_password(user["username"], current):
+        return _back("/account", err="The current password is wrong.")
+    try:
+        auth.check_new_password(password, again)
+        if password == current:
+            raise ValueError("The new password is the same as the current one.")
+    except ValueError as exc:
+        return _back("/account", err=str(exc))
+    db.set_user_password(user["id"], auth.hash_password(password))
+    log.info("password changed for %s", user["username"])
+    return _back("/login", msg="Password changed. Sign in again.")
+
+
+@app.post("/users")
+async def add_user(username: str = Form(...), password: str = Form(...), again: str = Form(...)):
+    username = username.strip()
+    if not auth.valid_username(username):
+        return _back("/account", err="User names are 1 to 32 letters, digits, dots, dashes or underscores.")
+    if db.get_user(username):
+        return _back("/account", err=f"There is already a user named {username}.")
+    try:
+        auth.check_new_password(password, again)
+    except ValueError as exc:
+        return _back("/account", err=str(exc))
+    db.add_user(username, auth.hash_password(password), must_change=True)
+    return _back("/account", msg=f"User {username} added. They must change the password at first sign-in.")
+
+
+@app.post("/users/{user_id}/delete")
+async def remove_user(request: Request, user_id: int):
+    if user_id == request.state.user["id"]:
+        return _back("/account", err="You cannot remove the user you are signed in as.")
+    db.delete_user(user_id)
+    return _back("/account", msg="User removed.")
 
 
 # --- dashboard and enrolment ------------------------------------------------
@@ -955,6 +1062,29 @@ async def channels_scan():
         surveyed = f" Surveyed: {', '.join(done)}." if done else ""
         return _back("/channels", err="Survey failed on " + "; ".join(failed) + "." + surveyed)
     return _back("/channels", msg=f"Surveyed {len(done)} router{'s' if len(done) != 1 else ''}.")
+
+
+# --- alerts and logs --------------------------------------------------------------------
+
+
+@app.get("/alerts")
+async def alerts_page(request: Request):
+    ctx = {
+        "open": db.open_alerts(), "history": db.cleared_alerts(),
+        "offline_after": config.ALERT_OFFLINE_AFTER, "webhook": bool(config.ALERT_WEBHOOK),
+    }
+    return templates.TemplateResponse(request, "alerts.html", ctx)
+
+
+@app.get("/devices/{device_id}/logs")
+async def logs_page(request: Request, device_id: int):
+    dev = _device_or_404(device_id)
+    try:
+        logs = await router.logs(dev)
+    except router.RouterError as exc:
+        return _back("/", err=f"Cannot read logs right now. {exc}")
+    ctx = logs | {"dev": dev, "label": _label(dev), "lines": router.LOG_LINES}
+    return templates.TemplateResponse(request, "logs.html", ctx)
 
 
 # --- Wi-Fi clients ----------------------------------------------------------------

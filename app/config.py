@@ -27,3 +27,14 @@ FIRMWARE_MAX_JUMP_DAYS = int(os.environ.get("FIRMWARE_MAX_JUMP_DAYS", "62"))
 # Seconds allowed for the router to write an image to flash, and to boot it.
 FIRMWARE_WRITE_TIMEOUT = int(os.environ.get("FIRMWARE_WRITE_TIMEOUT", "900"))
 FIRMWARE_BOOT_TIMEOUT = int(os.environ.get("FIRMWARE_BOOT_TIMEOUT", "600"))
+
+# Seconds a router must be silent before an offline alert opens.
+ALERT_OFFLINE_AFTER = int(os.environ.get("ALERT_OFFLINE_AFTER", "300"))
+# Optional URL that receives {"text": "..."} whenever an alert opens or clears.
+ALERT_WEBHOOK = os.environ.get("ALERT_WEBHOOK", "")
+
+# Hours a sign-in lasts.
+SESSION_HOURS = float(os.environ.get("SESSION_HOURS", "168"))
+# The user created with a new database. Its password must be changed at first sign-in.
+DEFAULT_USER = os.environ.get("DEFAULT_USER", "admin")
+DEFAULT_PASSWORD = os.environ.get("DEFAULT_PASSWORD", "admin")
