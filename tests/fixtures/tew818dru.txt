@@ -1,0 +1,29 @@
+@@nvram
+router_name=AP-One
+DD_BOARD=Trendnet TEW818DRU
+os_version=52054
+lan_ipaddr=192.168.1.3
+time_zone=America/Los_Angeles
+sshd_passwd_auth=1
+telnetd_enable=1
+syslogd_enable=0
+@@release
+Release: 03/18/23
+@@kernel
+Linux 4.4.302-st37 armv7l
+@@uptime
+45216.86 89377.87
+@@loadavg
+0.00 0.02 0.01 1/74 5662
+@@meminfo
+MemTotal:         124052 kB
+MemFree:           64056 kB
+Buffers:            5040 kB
+Cached:            13308 kB
+MemAvailable:      79240 kB
+@@nvram_usage
+size: 27339 bytes (38197 left)
+@@radios
+wl0|4|20|2|psk2|HomeNet
+wl1|60|20|7|psk2|HomeNet-5G
+@@end

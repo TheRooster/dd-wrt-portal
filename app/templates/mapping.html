@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Settings mapping · {{ label }}{% endblock %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / {{ label }} / Settings mapping</p>
+  <h2>How {{ label }} names the portal's settings</h2>
+  <p class="hint">The portal keeps one name for each setting. Routers differ in which radio serves which band, and sometimes in what a setting is called. {% if not dev.mapped %}The choices below are the portal's best guess: check them and save to finish setting up this router.{% endif %}</p>
+
+  <form method="post" action="/devices/{{ dev.id }}/mapping" autocomplete="off">
+    <h3>Radios</h3>
+    <div class="panel flush scroll">
+      <table class="list managed">
+        <thead><tr><th>Band</th><th>Radio on this router</th></tr></thead>
+        <tbody>
+        {% for band in bands %}
+          <tr>
+            <td><label for="radio__{{ band }}">{{ band }} GHz</label></td>
+            <td>
+              <select id="radio__{{ band }}" name="radio__{{ band }}" class="wide">
+                <option value="">No radio for this band</option>
+                {% for r in radios %}
+                <option value="{{ r.prefix }}" {{ "selected" if mapping.radios.get(band) == r.prefix }}>{{ r.prefix }}: network "{{ r.ssid }}", channel setting {{ r.channel or "unset" }}</option>
+                {% endfor %}
+              </select>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Settings</h3>
+    <p class="hint">Leave "Named differently here" blank to use the name shown. Fill it in only if this router calls the setting something else. A setting marked not found is skipped on this router and never written.</p>
+    <div class="panel flush scroll">
+      <table class="list managed">
+        <thead><tr><th>Portal setting</th><th>On this router</th><th>Named differently here</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td><span class="mono">{{ r.key }}</span>{% if r.label %}<div class="hint">{{ r.label }}</div>{% endif %}</td>
+            <td class="{{ 'unsupported' if not r.found and r.managed else '' }}">
+              {% if r.found %}<span class="mono">{{ r.resolved }}</span>
+              {% else %}Not found{% if r.managed %} · managed, so this router will be skipped{% endif %}{% endif %}
+            </td>
+            <td><input name="alias__{{ r.key }}" value="{{ r.alias }}" list="device-keys" aria-label="This router's name for {{ r.key }}" placeholder="Same name"></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <datalist id="device-keys">{% for k in device_keys %}<option value="{{ k }}">{% endfor %}</datalist>
+
+    <p class="confirm-row"><button>{{ "Save mapping" if dev.mapped else "Confirm mapping" }}</button><a class="button" href="/">Cancel</a></p>
+  </form>
+{% endblock %}

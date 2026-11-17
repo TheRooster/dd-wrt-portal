@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block actions %}<form method="post" action="/poll"><button class="quiet">Refresh now</button></form>{% endblock %}
+{% block main %}
+  <div id="devices">{% include "_devices.html" %}</div>
+
+  <section class="panel">
+    <h2>Add a router</h2>
+    <p class="hint">The root password is used once to install the portal's SSH key on the router. It is not saved.</p>
+    <form method="post" action="/devices" class="enroll" autocomplete="off">
+      <label>IP address
+        <input name="host" required inputmode="decimal" placeholder="192.168.1.3">
+      </label>
+      <label>Root password
+        <input name="password" type="password" required autocomplete="off">
+      </label>
+      <button>Add router</button>
+    </form>
+    <details>
+      <summary>Portal public key</summary>
+      <p class="hint">To enrol by hand instead, paste this into Services → Secure Shell → Authorized Keys.</p>
+      <pre>{{ public_key }}</pre>
+    </details>
+  </section>
+{% endblock %}
+{% block script %}
+<script>
+  // Keep the router list current without reloading the page (and the form).
+  // Skipped while a "Remove" confirmation is open so it isn't closed mid-click.
+  const box = document.getElementById("devices");
+  setInterval(async () => {
+    if (document.hidden || box.querySelector("details[open]")) return;
+    try {
+      const r = await fetch("/partials/devices");
+      if (r.ok) box.innerHTML = await r.text();
+    } catch (e) { /* portal restarting; try again next tick */ }
+  }, 15000);
+</script>
+{% endblock %}

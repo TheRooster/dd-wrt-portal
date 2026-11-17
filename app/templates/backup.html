@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Backup · {{ label }}{% endblock %}
+{% macro value(v) %}{% if v is none %}<span class="dim">–</span>{% elif v == "" %}<span class="dim">(empty)</span>{% else %}{{ v }}{% endif %}{% endmacro %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / <a href="/devices/{{ dev.id }}/backups">{{ label }}</a> / Backup</p>
+  <div class="page-head">
+    <div>
+      <h2>Backup from <time datetime="{{ backup.taken_at|iso }}">{{ backup.taken_at|iso }}</time></h2>
+      <p class="sub">{{ label }} · {{ backup.model }} · r{{ backup.build }} · {{ backup.settings }} settings · {{ reasons.get(backup.reason, backup.reason) }}</p>
+    </div>
+    <a class="button" href="/backups/{{ backup.id }}/download">Download .bin</a>
+  </div>
+  <p class="hint">The download is the router's own backup format. Restore it on the same model with Administration → Backup, or <code>nvram restore</code>. It contains passwords in readable form.</p>
+
+  <section>
+    <h3>Changes since the previous backup</h3>
+    {% if changes is none %}
+      <p class="dim">This is the oldest backup stored for this router, so there is nothing to compare it with.</p>
+    {% elif not changes %}
+      <p class="dim">No differences.</p>
+    {% else %}
+      <p class="hint">Compared with the backup from <a href="/backups/{{ previous.id }}"><time datetime="{{ previous.taken_at|iso }}">{{ previous.taken_at|iso }}</time></a>.</p>
+      <div class="panel flush scroll">
+        <table class="list settings">
+          <thead><tr><th>Setting</th><th>Before</th><th>After</th></tr></thead>
+          <tbody>
+          {% for c in changes %}
+            <tr class="{{ c.kind }}">
+              <td class="key">{{ c.name }}{% if c.kind != "changed" %} <span class="tag">{{ c.kind }}</span>{% endif %}</td>
+              <td class="val">{{ value(c.old) }}</td>
+              <td class="val">{{ value(c.new) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h3>All settings</h3>
+    <label class="filter">Filter
+      <input id="filter" type="search" placeholder="e.g. wl0_ or ssid" autocomplete="off">
+    </label>
+    <p class="hint" id="count" aria-live="polite"></p>
+    <div class="panel flush scroll">
+      <table class="list settings" id="settings">
+        <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+        <tbody>
+        {% for name, shown, secret in settings %}
+          <tr><td class="key">{{ name }}</td><td class="val">{{ value(shown) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+{% block script %}
+<script>
+  const rows = [...document.querySelectorAll("#settings tbody tr")];
+  const count = document.getElementById("count");
+  const apply = (q) => {
+    q = q.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const hit = !q || r.textContent.toLowerCase().includes(q);
+      r.hidden = !hit;
+      shown += hit;
+    }
+    count.textContent = q ? `${shown} of ${rows.length} settings match` : `${rows.length} settings`;
+  };
+  document.getElementById("filter").addEventListener("input", (e) => apply(e.target.value));
+  apply("");
+</script>
+{% endblock %}

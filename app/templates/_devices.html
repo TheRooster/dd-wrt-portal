@@ -1,0 +1,83 @@
+{% if devices %}
+<p class="summary">
+  <span><strong>{{ online }}</strong> of {{ devices|length }} online</span>
+  <span><strong>{{ clients }}</strong> Wi-Fi clients</span>
+  <span>{% if builds|length > 1 %}<strong>{{ builds|length }}</strong> different firmware builds{% elif builds %}All on build <strong>r{{ builds[0] }}</strong>{% endif %}</span>
+</p>
+<div class="grid">
+{% for d in devices %}
+  {% set s = d.status %}
+  <article class="card {{ 'busy' if d.busy else 'up' if d.online else 'down' }}">
+    <div class="card-head">
+      <div>
+        <h2>{{ (s.name if s else none) or d.host }}</h2>
+        <p class="sub">{{ d.host }}{% if s and s.model %} · {{ s.model }}{% endif %}</p>
+      </div>
+      <span class="state">{{ d.busy or ("Online" if d.online else "Offline") }}</span>
+    </div>
+
+    {% if d.error and not d.busy %}<p class="notice bad">{{ d.error }}</p>{% endif %}
+
+    {% if s %}
+    <dl>
+      <div><dt>Firmware</dt><dd>r{{ s.build }}{% if s.release %} <span class="dim">({{ s.release }})</span>{% endif %}</dd></div>
+      <div><dt>Uptime</dt><dd>{{ s.uptime_s|duration }}</dd></div>
+      <div><dt>Load</dt><dd>{{ "%.2f"|format(s.load1) if s.load1 is not none else "–" }}</dd></div>
+      <div><dt>Memory free</dt><dd>{% if s.mem_total_kb and s.mem_avail_kb is not none %}{{ (100 * s.mem_avail_kb / s.mem_total_kb)|round|int }}% <span class="dim">of {{ (s.mem_total_kb / 1024)|round|int }} MB</span>{% else %}–{% endif %}</dd></div>
+      <div><dt>NVRAM used</dt><dd>{% if s.nvram_used is not none %}{{ (100 * s.nvram_used / (s.nvram_used + s.nvram_free))|round|int }}%{% else %}–{% endif %}</dd></div>
+    </dl>
+
+    <table>
+      <thead><tr><th>Band</th><th>SSID</th><th class="num">Channel</th><th class="num">Clients</th></tr></thead>
+      <tbody>
+      {% for r in s.radios %}
+        <tr><td>{{ r.band or r.name }}</td><td>{{ r.ssid }}</td><td class="num">{{ r.channel if r.channel is not none else "–" }}</td><td class="num">{{ r.clients }}</td></tr>
+      {% else %}
+        <tr><td colspan="4" class="dim">No active radios</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if s.telnet_enabled or s.ssh_password_auth %}
+    <p class="flags">
+      {% if s.telnet_enabled %}<span class="flag">Telnet on</span>{% endif %}
+      {% if s.ssh_password_auth %}<span class="flag">SSH password login on</span>{% endif %}
+    </p>
+    {% endif %}
+    {% endif %}
+
+    {% if s and not d.mapped %}
+    <p class="backup-line"><a href="/devices/{{ d.id }}/mapping">Finish setup</a><span class="flag">Settings mapping not confirmed</span></p>
+    {% elif managed and s %}
+    <p class="backup-line">
+      {% if d.drift is none %}<span class="dim">Managed settings: not checked yet</span>
+      {% elif d.drift %}<a href="/devices/{{ d.id }}/sync">Review and apply</a><span class="flag">{{ d.drift }} managed setting{{ "s" if d.drift != 1 }} differ{{ "s" if d.drift == 1 }}</span>
+      {% else %}<span class="dim">Managed settings</span><span class="insync">In sync</span>{% endif %}
+    </p>
+    {% if d.unsupported %}
+    <p class="backup-line"><a href="/devices/{{ d.id }}/mapping">Settings mapping</a><span class="flag" title="{{ d.unsupported|join(', ') }}">{{ d.unsupported|length }} managed setting{{ "s" if d.unsupported|length != 1 }} not supported</span></p>
+    {% endif %}
+    {% endif %}
+    <p class="backup-line">
+      <a href="/devices/{{ d.id }}/backups">Backups</a>
+      <span class="dim">{% if d.backups %}{{ d.backups.count }} stored · checked {{ d.backups.confirmed_at|ago }}{% else %}none yet{% endif %}</span>
+    </p>
+
+    <footer>
+      <span class="dim">Checked {{ d.last_poll|ago }}{% if s and d.mapped %} · <a href="/devices/{{ d.id }}/mapping">Mapping</a>{% endif %}</span>
+      <details class="confirm">
+        <summary>Remove</summary>
+        <form method="post" action="/devices/{{ d.id }}/delete">
+          <button class="danger-fill">Remove router{% if d.backups %} and delete {{ d.backups.count }} backup{{ "s" if d.backups.count != 1 }}{% endif %}</button>
+          {% if not d.online %}
+          <button class="danger-fill" name="force" value="1">Remove, leaving the portal's key on the router</button>
+          {% endif %}
+        </form>
+      </details>
+    </footer>
+  </article>
+{% endfor %}
+</div>
+{% else %}
+<p class="empty">No routers yet. Add one below.</p>
+{% endif %}

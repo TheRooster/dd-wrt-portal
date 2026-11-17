@@ -1,0 +1,29 @@
+@@nvram
+router_name=AP-Two
+DD_BOARD=Asus RT-AC66U
+os_version=55678
+lan_ipaddr=192.168.1.4
+time_zone=America/Los_Angeles
+sshd_passwd_auth=1
+telnetd_enable=1
+syslogd_enable=0
+@@release
+Release: 04/06/24
+@@kernel
+Linux 4.4.302-st49 mips
+@@uptime
+45201.65 44056.98
+@@loadavg
+0.00 0.02 0.01 1/55 6166
+@@meminfo
+MemTotal:         238260 kB
+MemFree:          188592 kB
+Buffers:            6392 kB
+Cached:            14572 kB
+MemAvailable:     201512 kB
+@@nvram_usage
+size: 29199 bytes (36337 left)
+@@radios
+wl0|8|20|6|psk2|HomeNet
+wl1|44|20|2|psk2|HomeNet-5G
+@@end

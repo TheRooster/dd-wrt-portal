@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Restore · {{ label }}{% endblock %}
+{% macro value(v) %}{% if v is none %}<span class="dim">–</span>{% elif v == "" %}<span class="dim">(empty)</span>{% else %}{{ v }}{% endif %}{% endmacro %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / <a href="/devices/{{ dev.id }}/backups">{{ label }}</a> / Restore</p>
+  <h2>Restore {{ label }} to its backup from <time datetime="{{ backup.taken_at|iso }}">{{ backup.taken_at|iso }}</time>?</h2>
+
+  <ul class="facts">
+    <li class="{{ 'warn' if status.clients else '' }}">
+      <strong>{{ status.clients }} Wi-Fi client{{ "s" if status.clients != 1 }}</strong>
+      {% if status.clients %}connected to this router right now will be disconnected while it reboots, usually for a minute or two.
+      {% else %}connected to this router right now. It will reboot, which usually takes a minute or two.{% endif %}
+      {% if status.radios %}<span class="dim">({% for r in status.radios %}{{ r.band or r.name }}: {{ r.clients }}{{ ", " if not loop.last }}{% endfor %})</span>{% endif %}
+    </li>
+    <li>
+      {% if changes %}<strong>{{ changes|length }} setting{{ "s" if changes|length != 1 }}</strong> will change, listed below.
+      {% else %}<strong>No settings will change.</strong> The router already matches this backup; it will still be rewritten and rebooted.{% endif %}
+    </li>
+    <li>The router's current settings are backed up first, so this can be undone by restoring that backup.</li>
+    {% if other_build %}
+    <li class="warn"><strong>Different firmware.</strong> This backup was taken on r{{ backup.build }} and the router now runs r{{ status.build }}. DD-WRT advises against restoring settings across firmware versions.</li>
+    {% endif %}
+  </ul>
+
+  {% if wrong_model %}
+    <p class="notice bad">This backup is from a {{ backup.model }}, but the router is a {{ status.model }}. It cannot be restored here.</p>
+    <p><a class="button" href="/devices/{{ dev.id }}/backups">Back</a></p>
+  {% else %}
+    <form method="post" action="/backups/{{ backup.id }}/restore" class="confirm-row">
+      <button class="danger-fill">Restore and reboot</button>
+      <a class="button" href="/devices/{{ dev.id }}/backups">Cancel</a>
+    </form>
+  {% endif %}
+
+  {% if changes %}
+  <h3>What will change</h3>
+  <div class="panel flush scroll">
+    <table class="list settings">
+      <thead><tr><th>Setting</th><th>Now</th><th>After restore</th></tr></thead>
+      <tbody>
+      {% for c in changes %}
+        <tr class="{{ c.kind }}">
+          <td class="key">{{ c.name }}{% if c.kind != "changed" %} <span class="tag">{{ c.kind }}</span>{% endif %}</td>
+          <td class="val">{{ value(c.old) }}</td>
+          <td class="val">{{ value(c.new) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

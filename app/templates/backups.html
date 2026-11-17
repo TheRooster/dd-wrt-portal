@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Backups · {{ label }}{% endblock %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / {{ label }}</p>
+  <div class="page-head">
+    <div>
+      <h2>Backups and activity: {{ label }}</h2>
+      <p class="sub">{{ dev.host }}{% if dev.status and dev.status.model %} · {{ dev.status.model }}{% endif %}</p>
+    </div>
+    {% if not busy %}<form method="post" action="/devices/{{ dev.id }}/backups"><button>Back up now</button></form>{% endif %}
+  </div>
+  {% if busy %}<p class="notice busy" role="status">{{ busy }}… This page refreshes by itself.</p>{% endif %}
+  <p class="hint">A new backup is stored only when the router's settings differ from the latest one. "Still current" is the last time the router was checked and found to match.</p>
+
+  {% if backups %}
+  <div class="panel flush scroll">
+    <table class="list">
+      <thead><tr><th>Taken</th><th>Why</th><th>Firmware</th><th>Changes</th><th>Still current</th><th></th><th></th></tr></thead>
+      <tbody>
+      {% for b in backups %}
+        <tr>
+          <td><a href="/backups/{{ b.id }}"><time datetime="{{ b.taken_at|iso }}">{{ b.taken_at|iso }}</time></a></td>
+          <td>{{ reasons.get(b.reason, b.reason) }}</td>
+          <td>r{{ b.build }}</td>
+          <td>{% if b.changes is none %}<span class="dim">First backup</span>{% else %}{{ b.changes }} setting{{ "s" if b.changes != 1 }} changed{% endif %}</td>
+          <td class="dim">{% if loop.first %}{{ b.confirmed_at|ago }}{% else %}–{% endif %}</td>
+          <td class="num"><a href="/backups/{{ b.id }}/download">Download</a></td>
+          <td class="num">{% if not busy %}<a href="/backups/{{ b.id }}/restore">Restore…</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No backups yet.</p>
+  {% endif %}
+
+  {% if events %}
+  <h3>Activity</h3>
+  <ul class="events">
+    {% for e in events %}
+    <li class="{{ 'ok' if e.ok else 'bad' }}"><time datetime="{{ e.at|iso }}">{{ e.at|iso }}</time><span>{{ e.message }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+{% endblock %}
+{% block script %}{% if busy %}<script>setTimeout(() => location.replace(location.pathname), 5000);</script>{% endif %}{% endblock %}

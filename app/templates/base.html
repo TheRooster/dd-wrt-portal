@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}DD-WRT Portal{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1><a href="/">DD-WRT Portal</a></h1>
+  <nav><a href="/">Routers</a><a href="/settings">Managed settings</a></nav>
+  {% block actions %}{% endblock %}
+</header>
+<main>
+  {% if msg %}<p class="notice ok" role="status">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="notice bad" role="alert">{{ err }}</p>{% endif %}
+  {% block main %}{% endblock %}
+</main>
+<script>
+  // Timestamps are rendered in UTC by the server; show them in the viewer's time zone.
+  const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+  for (const t of document.querySelectorAll("time[datetime]")) {
+    t.textContent = fmt.format(new Date(t.dateTime));
+  }
+</script>
+{% block script %}{% endblock %}
+</body>
+</html>

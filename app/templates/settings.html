@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Managed settings{% endblock %}
+{% macro name(d) %}{{ (d.status.name if d.status else none) or d.host }}{% endmacro %}
+{% macro now(field, d) %}
+  {%- set v = d.read.get(field.key) -%}
+  {%- set want = (d.overrides if field.per_device else effective).get(field.key) -%}
+  {%- if field.key in d.unsupported_fields -%}
+  <td class="{{ 'unsupported' if want is not none else 'dim' }}">Not supported</td>
+  {%- else -%}
+  <td class="{{ 'differs' if want is not none and v != want else '' }}">{{ display(field, v) }}</td>
+  {%- endif -%}
+{%- endmacro %}
+{% block main %}
+  <div class="page-head">
+    <div>
+      <h2>Managed settings</h2>
+      <p class="sub">Values every router should have. A setting left blank is not managed and is never touched.</p>
+    </div>
+  </div>
+
+  {% set drifted = devices|selectattr("drift")|list %}
+  {% set lacking = devices|selectattr("unsupported")|list %}
+  {% if managed and devices %}
+  <section class="panel status">
+    {% if drifted %}
+      <div>
+        <strong>{{ drifted|length }} router{{ "s" if drifted|length != 1 }} differ{{ "s" if drifted|length == 1 }} from the managed settings.</strong>
+        <ul>
+          {% for d in drifted %}
+          <li>{{ name(d) }}: {{ d.drift }} setting{{ "s" if d.drift != 1 }} · {{ d.status.clients }} client{{ "s" if d.status.clients != 1 }} connected · <a href="/devices/{{ d.id }}/sync">Review and apply</a></li>
+          {% endfor %}
+        </ul>
+        <p class="hint">Applying reboots the router, which takes about a minute.</p>
+      </div>
+      {% if drifted|length > 1 %}
+      <form method="post" action="/sync/all"><button>Apply to all, one at a time</button></form>
+      {% endif %}
+    {% else %}
+      <strong>Every router matches the managed settings{{ " it supports" if lacking }}.</strong>
+    {% endif %}
+  </section>
+  {% for d in lacking %}
+  <p class="notice busy">{{ name(d) }} does not support {{ d.unsupported|length }} managed setting{{ "s" if d.unsupported|length != 1 }}: {{ d.unsupported|join(", ") }}. These are skipped on it. <a href="/devices/{{ d.id }}/mapping">Settings mapping</a></p>
+  {% endfor %}
+  {% endif %}
+
+  <form method="post" action="/settings" autocomplete="off">
+    <div class="panel flush scroll">
+      <table class="list managed">
+        <thead>
+          <tr><th>Setting</th><th>Managed value</th>{% for d in devices %}<th>{{ name(d) }} now</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+        {% for group, fields in groups.items() %}
+          <tr class="group"><th colspan="{{ 2 + devices|length }}">{{ group }}</th></tr>
+          {% for f in fields %}
+          <tr>
+            <td><label for="{{ f.key }}">{{ f.label }}</label>{% if f.help %}<div class="hint">{{ f.help }}</div>{% endif %}</td>
+            <td>
+              {% if f.kind == "onoff" %}
+                <select id="{{ f.key }}" name="{{ f.key }}">
+                  <option value="">Not managed</option>
+                  <option value="1" {{ "selected" if fleet.get(f.key) == "1" }}>On</option>
+                  <option value="0" {{ "selected" if fleet.get(f.key) == "0" }}>Off</option>
+                </select>
+              {% elif f.kind == "secret" %}
+                {% if f.key == "passphrase_24" %}
+                <label class="inline"><input type="checkbox" id="same" name="passphrase_24_same" value="1" {{ "checked" if same_passphrase }}> Same as 5 GHz</label>
+                {% endif %}
+                <div {% if f.key == "passphrase_24" %}id="own-24"{% endif %}>
+                  <input id="{{ f.key }}" name="{{ f.key }}" type="password" autocomplete="new-password"
+                         placeholder="{{ 'Managed; leave blank to keep' if f.key in fleet else 'Not managed' }}">
+                  {% if f.key in fleet %}<label class="inline"><input type="checkbox" name="stop_{{ f.key }}" value="1"> Stop managing</label>{% endif %}
+                </div>
+              {% elif f.kind == "time" %}
+                <input id="{{ f.key }}" name="{{ f.key }}" type="time" value="{{ fleet.get(f.key, '') }}">
+              {% else %}
+                <input id="{{ f.key }}" name="{{ f.key }}" value="{{ fleet.get(f.key, '') }}" placeholder="Not managed">
+              {% endif %}
+            </td>
+            {% for d in devices %}{{ now(f, d) }}{% endfor %}
+          </tr>
+          {% endfor %}
+        {% endfor %}
+        {% if plain %}
+          <tr class="group"><th colspan="{{ 2 + devices|length }}">Other settings</th></tr>
+          {% for key, want in plain.items() %}
+          <tr>
+            <td><label for="plain__{{ key }}" class="mono">{{ key }}</label></td>
+            <td>
+              <input id="plain__{{ key }}" name="plain__{{ key }}" value="{{ want }}" placeholder="(empty)">
+              <label class="inline"><input type="checkbox" name="stopplain__{{ key }}" value="1"> Stop managing</label>
+            </td>
+            {% for d in devices %}
+              {% set v = d.plain_now.get(key) %}
+              {% if v is none %}<td class="unsupported">Not supported</td>
+              {% else %}<td class="{{ 'differs' if v != want else '' }}">{{ v if v != "" else "(empty)" }}</td>{% endif %}
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Channels</h3>
+    <p class="hint">Set per router, because neighbouring access points should not share a channel.</p>
+    {% if devices %}
+    <div class="panel flush scroll">
+      <table class="list managed">
+        <thead><tr><th>Router</th>{% for f in device_fields %}<th>{{ f.label }}</th><th>Now</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for d in devices %}
+          <tr>
+            <td>{{ name(d) }}</td>
+            {% for f in device_fields %}
+            <td>
+              <select name="{{ f.key }}__{{ d.id }}" aria-label="{{ f.label }} for {{ name(d) }}">
+                <option value="">Not managed</option>
+                {% for c in channels[f.band] %}
+                <option value="{{ c }}" {{ "selected" if d.overrides.get(f.key) == c|string }}>{{ c }}{{ " (DFS)" if c in dfs }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            {{ now(f, d) }}
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="dim">No routers enrolled yet.</p>
+    {% endif %}
+
+    <p class="confirm-row"><button>Save managed settings</button><span class="hint">Saving does not change any router.</span></p>
+  </form>
+
+  {% if devices %}
+  <section class="panel">
+    <h2>Start from what the routers have now</h2>
+    <p class="hint">Manages every named setting above at its current value on one router, and each router's own current channels. Replaces those managed values; changes nothing on the routers.</p>
+    <form method="post" action="/settings/adopt" class="enroll">
+      <label>Take shared settings from
+        <select name="device_id">
+          {% for d in devices %}<option value="{{ d.id }}">{{ name(d) }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="secondary">Manage current settings</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if shared %}
+  <h3 id="shared">Other settings every router has</h3>
+  <p class="hint">{{ shared|length }} more settings exist on all {{ shared_names|length }} routers and can be managed too. Passwords, hardware details, and per-router identity (addresses, names) are left out. A setting can have the same name on two routers yet expect different values on different hardware, so where routers show different values now, check what each one accepts before managing it.</p>
+  <div class="confirm-row">
+    <label class="filter">Filter <input id="filter" type="search" placeholder="e.g. upnp or dns" autocomplete="off"></label>
+    <label class="inline"><input type="checkbox" id="only-differing"> Only where routers differ</label>
+    <span class="hint" id="count" aria-live="polite"></span>
+  </div>
+  <div class="panel flush scroll">
+    <table class="list managed" id="shared-table">
+      <thead><tr><th>Setting</th>{% for n in shared_names %}<th>{{ n }}</th>{% endfor %}<th>Manage as</th></tr></thead>
+      <tbody>
+      {% for key, values in shared.items() %}
+        {% set differs = values|unique|list|length > 1 %}
+        <tr {{ 'data-differs' if differs }}>
+          <td class="mono">{{ key }}</td>
+          {% for v in values %}<td class="val {{ 'differs' if differs }}">{{ v if v != "" else "(empty)" }}</td>{% endfor %}
+          <td>
+            <form method="post" action="/settings/manage" class="row-form">
+              <input type="hidden" name="key" value="{{ key }}">
+              <input name="value" value="{{ values[0] }}" aria-label="Managed value for {{ key }}" placeholder="(empty)">
+              <button class="secondary">Manage</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}
+{% block script %}
+<script>
+  const same = document.getElementById("same"), own = document.getElementById("own-24");
+  if (same) {
+    const toggle = () => { own.hidden = same.checked; };
+    same.addEventListener("change", toggle);
+    toggle();
+  }
+  const table = document.getElementById("shared-table");
+  if (table) {
+    const rows = [...table.tBodies[0].rows];
+    const filter = document.getElementById("filter"), only = document.getElementById("only-differing");
+    const count = document.getElementById("count");
+    const apply = () => {
+      const q = filter.value.trim().toLowerCase();
+      let shown = 0;
+      for (const r of rows) {
+        const hit = (!q || r.cells[0].textContent.toLowerCase().includes(q)) && (!only.checked || "differs" in r.dataset);
+        r.hidden = !hit;
+        shown += hit;
+      }
+      count.textContent = `${shown} of ${rows.length} shown`;
+    };
+    filter.addEventListener("input", apply);
+    only.addEventListener("change", apply);
+    apply();
+  }
+</script>
+{% endblock %}

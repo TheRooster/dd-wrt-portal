@@ -1,0 +1,29 @@
+@@nvram
+router_name=AP-Three
+DD_BOARD=Netgear R6220
+os_version=53323
+lan_ipaddr=192.168.1.7
+time_zone=America/Los_Angeles
+sshd_passwd_auth=1
+telnetd_enable=1
+syslogd_enable=0
+@@release
+Release: 07/15/23
+@@kernel
+Linux 4.14.320 mips
+@@uptime
+45221.14 89213.42
+@@loadavg
+0.01 0.03 0.00 1/55 7368
+@@meminfo
+MemTotal:         122296 kB
+MemFree:           78948 kB
+Buffers:            5764 kB
+Cached:            10880 kB
+MemAvailable:      93044 kB
+@@nvram_usage
+size: 21782 bytes (43754 left)
+@@radios
+wlan0|120|20|1|psk2|HomeNet-5G
+wlan1|1|20|1|psk2|HomeNet
+@@end

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Apply settings · {{ label }}{% endblock %}
+{% macro value(v) %}{% if v is none %}<span class="dim">–</span>{% elif v == "" %}<span class="dim">(empty)</span>{% else %}{{ v }}{% endif %}{% endmacro %}
+{% block main %}
+  {% set changes = plan.changes %}
+  <p class="crumbs"><a href="/">Routers</a> / {{ label }} / Apply managed settings</p>
+  {% if not changes %}
+    <h2>{{ label }} matches the managed settings</h2>
+    <p class="dim">Nothing to apply.</p>
+    {% if plan.unsupported %}<p class="notice busy">Not supported on this router, so left alone: {{ plan.unsupported|join(", ") }}. <a href="/devices/{{ dev.id }}/mapping">Settings mapping</a></p>{% endif %}
+    <p><a class="button" href="/">Back</a></p>
+  {% else %}
+    <h2>Apply {{ changes|length }} managed setting{{ "s" if changes|length != 1 }} to {{ label }}?</h2>
+    <ul class="facts">
+      <li class="{{ 'warn' if status.clients else '' }}">
+        <strong>{{ status.clients }} Wi-Fi client{{ "s" if status.clients != 1 }}</strong>
+        {% if status.clients %}connected to this router right now will be disconnected while it reboots, usually for a minute or two.
+        {% else %}connected to this router right now. It will reboot, which usually takes a minute or two.{% endif %}
+        {% if status.radios %}<span class="dim">({% for r in status.radios %}{{ r.band or r.name }}: {{ r.clients }}{{ ", " if not loop.last }}{% endfor %})</span>{% endif %}
+      </li>
+      <li>The router's current settings are backed up first, so this can be undone by restoring that backup.</li>
+      {% if plan.unsupported %}
+      <li class="warn"><strong>Not supported on this router, so left alone:</strong> {{ plan.unsupported|join(", ") }}. <a href="/devices/{{ dev.id }}/mapping">Settings mapping</a></li>
+      {% endif %}
+    </ul>
+    <form method="post" action="/devices/{{ dev.id }}/sync" class="confirm-row">
+      <button class="danger-fill">Apply and reboot</button>
+      <a class="button" href="/">Cancel</a>
+    </form>
+    <h3>What will change</h3>
+    <div class="panel flush scroll">
+      <table class="list settings">
+        <thead><tr><th>Setting</th><th>Now</th><th>After</th></tr></thead>
+        <tbody>
+        {% for c in changes %}
+          <tr><td class="key">{{ c.name }}</td><td class="val">{{ value(c.old) }}</td><td class="val">{{ value(c.new) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}
