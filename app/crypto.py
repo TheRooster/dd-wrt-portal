@@ -28,6 +28,13 @@ def _load():
     return _fernet
 
 
+def key():
+    """The key in use, as stored in backup.key."""
+    _load()
+    pinned = os.environ.get("BACKUP_KEY", "").strip()
+    return pinned.encode() if pinned else config.BACKUP_KEY_PATH.read_bytes().strip()
+
+
 def encrypt(data):
     return _load().encrypt(data)
 

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ddwrt-portal
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  # - ingress.yaml
+images:
+  # Where the cluster pulls the image from. Build and push it first.
+  - name: ddwrt-portal
+    newName: registry.example.internal/ddwrt-portal
+    newTag: "0.1.0"

@@ -10,12 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import alerts, auth, backups, channels, config, db, firmware, nvram, profile, router, sync
+from . import alerts, auth, backups, channels, config, db, firmware, nvram, profile, router, sync, transfer
 
 log = logging.getLogger("portal")
 BASE = Path(__file__).parent
@@ -305,6 +305,50 @@ async def remove_user(request: Request, user_id: int):
         return _back("/account", err="You cannot remove the user you are signed in as.")
     db.delete_user(user_id)
     return _back("/account", msg="User removed.")
+
+
+# --- export and import ------------------------------------------------------------------
+
+
+@app.get("/transfer")
+async def transfer_page(request: Request, msg: str = "", err: str = ""):
+    ctx = {
+        "msg": msg, "err": err, "min_length": transfer.MIN_PASSPHRASE,
+        "routers": len(db.list_devices()), "users": len(db.list_users()),
+    }
+    return templates.TemplateResponse(request, "transfer.html", ctx)
+
+
+@app.post("/transfer/export")
+async def transfer_export(request: Request, passphrase: str = Form(...), again: str = Form(...)):
+    try:
+        transfer.check_passphrase(passphrase, again)
+        blob = await asyncio.to_thread(transfer.export, passphrase)
+    except transfer.TransferError as exc:
+        return _back("/transfer", err=str(exc))
+    log.info("portal state exported by %s", request.state.user["username"])
+    name = time.strftime("ddwrt-portal-%Y%m%d-%H%M.export", time.gmtime())
+    return Response(blob, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/transfer/import")
+async def transfer_import(request: Request, file: UploadFile = File(...), passphrase: str = Form(...),
+                          confirm: str = Form("")):
+    if not confirm:
+        return _back("/transfer", err="Tick the box to confirm replacing this portal's data.")
+    try:
+        files = await asyncio.to_thread(transfer.unpack, await file.read(), passphrase)
+        aside = transfer.install(files)
+    except transfer.TransferError as exc:
+        return _back("/transfer", err=str(exc))
+    _last_check.clear()
+    sync.migrate()
+    log.warning("portal state replaced by an import (by %s); previous state kept in %s",
+                request.state.user["username"], aside)
+    response = _back("/login", msg="Import complete. Sign in with a user from the imported portal.")
+    response.delete_cookie(auth.COOKIE)
+    return response
 
 
 # --- dashboard and enrolment ------------------------------------------------

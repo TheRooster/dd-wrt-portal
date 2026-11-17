@@ -106,6 +106,45 @@ Each router card links to its logs, read over SSH on request and not stored.
 The system log needs "System log" switched on in Managed settings; the kernel
 log is always there.
 
+## Kubernetes
+
+`k8s/` holds a kustomize base: a namespace, a 1 Gi volume claim for `/data`,
+a Deployment and a Service. An Ingress is included but not enabled.
+
+    docker buildx build --platform linux/amd64,linux/arm64 \
+        -t registry.example.internal/ddwrt-portal:0.1.0 --push .
+    # set the image (and, for the Ingress, host and class) in k8s/
+    kubectl apply -k k8s
+
+- One replica, `Recreate` strategy: the database is SQLite on a
+  ReadWriteOnce volume, and in-progress router changes are tracked in memory.
+- The pod runs as uid 10001 with a read-only root filesystem and no
+  capabilities. It needs to reach the routers on TCP 22 and
+  `download1.dd-wrt.com` on 443; it never uses the Kubernetes API.
+- Optional Secret `ddwrt-portal` supplies `DEFAULT_PASSWORD`, `BACKUP_KEY`
+  or `ALERT_WEBHOOK`:
+
+      kubectl -n ddwrt-portal create secret generic ddwrt-portal \
+          --from-literal=DEFAULT_PASSWORD='...'
+
+- Expose it over HTTPS only. With the Ingress terminating TLS the session
+  cookie is marked Secure (`FORWARDED_ALLOW_IPS` is set for that).
+- To move from Docker, export there and import here (see Moving the portal).
+
+## Moving the portal
+
+Account → Export and import. An export is one file holding the database
+(routers, backups, managed settings, users), the SSH key the routers trust
+and the backup key. It is encrypted with a passphrase chosen at export time,
+which is not stored. Sign-in sessions are left out.
+
+Importing replaces everything in the receiving portal and signs you out; sign
+in with a user from the export. The replaced data is moved to
+`/data/before-import-<time>/`, not deleted. An import is refused while a
+router is mid-change, or if `BACKUP_KEY` is set to a different key than the
+export's. Stop the old portal afterwards so two portals do not manage the
+same routers.
+
 ## State
 
 Everything lives in the `/data` volume: `portal.db` (SQLite), `id_ed25519`

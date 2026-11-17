@@ -1,0 +1,25 @@
+# Optional. Add "ingress.yaml" to the resources in kustomization.yaml after
+# setting the host, the ingress class and the TLS secret. The portal serves
+# plain HTTP and sends passwords and session cookies, so expose it over HTTPS only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ddwrt-portal
+  # annotations:
+  #   cert-manager.io/cluster-issuer: letsencrypt   # if cert-manager issues the certificate
+spec:
+  # ingressClassName: nginx
+  tls:
+    - hosts: [ddwrt.example.internal]
+      secretName: ddwrt-portal-tls
+  rules:
+    - host: ddwrt.example.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ddwrt-portal
+                port:
+                  name: http

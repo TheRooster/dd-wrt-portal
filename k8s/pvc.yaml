@@ -1,0 +1,12 @@
+# All state: the SQLite database, the portal's SSH key and the backup key.
+# Losing this volume means re-enrolling every router and losing backup history.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ddwrt-portal-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: set this if the cluster has no default storage class

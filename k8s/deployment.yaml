@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddwrt-portal
+spec:
+  # One pod only: the database is SQLite on a ReadWriteOnce volume, and the
+  # record of which router is mid-change is held in memory.
+  replicas: 1
+  strategy:
+    type: Recreate   # the old pod must release the volume before the new one starts
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ddwrt-portal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ddwrt-portal
+    spec:
+      automountServiceAccountToken: false   # the portal never talks to the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001                      # makes the volume writable by the portal's user
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: portal
+          image: ddwrt-portal               # replaced by the image set in kustomization.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: POLL_INTERVAL
+              value: "60"
+            # Trust X-Forwarded-Proto from the ingress, so the session cookie is
+            # marked Secure when the browser's connection is HTTPS. The pod is
+            # reachable only through the Service.
+            - name: FORWARDED_ALLOW_IPS
+              value: "*"
+          envFrom:
+            # Optional Secret holding any of DEFAULT_PASSWORD, BACKUP_KEY, ALERT_WEBHOOK.
+            - secretRef:
+                name: ddwrt-portal
+                optional: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            # A firmware image (up to about 35 MB) is held in memory while it is copied to a router.
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ddwrt-portal-data
+        - name: tmp
+          emptyDir: {}

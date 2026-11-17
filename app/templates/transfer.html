@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Export and import{% endblock %}
+{% block main %}
+  <p class="crumbs"><a href="/account">Account</a> / Export and import</p>
+  <section class="panel">
+    <h2>Export</h2>
+    <p class="hint">One file with everything this portal holds: {{ routers }} router{{ "s" if routers != 1 }} and their backups, managed settings, {{ users }} user{{ "s" if users != 1 }}, the SSH key the routers trust, and the key that decrypts backups. Anyone who can read it controls the routers, so it is encrypted with a passphrase you choose here. The passphrase is not stored; without it the file cannot be opened.</p>
+    <form method="post" action="/transfer/export" class="match" autocomplete="off">
+      <label>Passphrase <input name="passphrase" type="password" required minlength="{{ min_length }}" autocomplete="new-password"></label>
+      <label>Again <input name="again" type="password" required autocomplete="new-password"></label>
+      <button>Download export</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Import</h2>
+    <p class="hint">Replaces everything in this portal with the contents of an export: routers, backups, settings and users. You are signed out and sign in again with a user from the export. The data being replaced is moved to a <span class="mono">before-import-…</span> folder in the data volume, not deleted. Stop the portal the export came from, so two portals do not manage the same routers.</p>
+    <form method="post" action="/transfer/import" enctype="multipart/form-data" class="stack narrow-form" autocomplete="off">
+      <label>Export file <input name="file" type="file" required></label>
+      <label>Its passphrase <input name="passphrase" type="password" required autocomplete="off"></label>
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> Replace this portal's {{ routers }} router{{ "s" if routers != 1 }} and {{ users }} user{{ "s" if users != 1 }} with the export.</label>
+      <div><button class="danger-fill">Import and replace</button></div>
+    </form>
+  </section>
+{% endblock %}
