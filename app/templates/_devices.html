@@ -20,7 +20,7 @@
 
     {% if s %}
     <dl>
-      <div><dt>Firmware</dt><dd>r{{ s.build }}{% if s.release %} <span class="dim">({{ s.release }})</span>{% endif %}</dd></div>
+      <div><dt>Firmware</dt><dd>r{{ s.build }}{% if s.release %} <span class="dim">({{ s.release }})</span>{% endif %}{% if d.firmware.status == "available" %}<div><a href="/firmware" class="flag">r{{ d.firmware.latest.build }} available</a></div>{% endif %}</dd></div>
       <div><dt>Uptime</dt><dd>{{ s.uptime_s|duration }}</dd></div>
       <div><dt>Load</dt><dd>{{ "%.2f"|format(s.load1) if s.load1 is not none else "–" }}</dd></div>
       <div><dt>Memory free</dt><dd>{% if s.mem_total_kb and s.mem_avail_kb is not none %}{{ (100 * s.mem_avail_kb / s.mem_total_kb)|round|int }}% <span class="dim">of {{ (s.mem_total_kb / 1024)|round|int }} MB</span>{% else %}–{% endif %}</dd></div>

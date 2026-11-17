@@ -137,3 +137,12 @@ table.managed select.wide { max-width: 520px; }
 .row-form input { min-width: 120px; }
 .row-form button { padding: 7px 12px; }
 .confirm-row .filter { margin: 0; }
+
+/* --- firmware ------------------------------------------------------------------ */
+a.flag { text-decoration: none; display: inline-block; margin-top: 4px; }
+.unsupported-text { color: var(--bad); font-weight: 600; }
+form.match { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+form.match label { font-size: 12px; color: var(--dim); }
+form.inline-form { display: inline; }
+input.build { width: 7.5em; }
+.bad-text { color: var(--bad); }

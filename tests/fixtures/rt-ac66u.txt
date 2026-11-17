@@ -26,4 +26,8 @@ size: 29199 bytes (36337 left)
 @@radios
 wl0|8|20|6|psk2|HomeNet
 wl1|44|20|2|psk2|HomeNet-5G
+@@stations
+wl0|02:00:00:00:00:B1|-41||
+wl1|02:00:00:00:00:B2|-36||
+wl1|garbage|x||
 @@end

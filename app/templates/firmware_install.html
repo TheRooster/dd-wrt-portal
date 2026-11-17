@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Install firmware · {{ label }}{% endblock %}
+{% macro mb(n) %}{{ "%.1f"|format(n / 1048576) }} MB{% endmacro %}
+{% block main %}
+  <p class="crumbs"><a href="/">Routers</a> / <a href="/firmware">Firmware</a> / {{ label }}</p>
+  <h2>Install r{{ target.build }} on {{ label }}?</h2>
+
+  <ul class="facts">
+    <li>
+      <strong>r{{ status.build }}</strong>{% if running_on %} ({{ running_on }}){% endif %} to
+      <strong>r{{ target.build }}</strong> ({{ target.date }}){% if gap_days is not none %}: {{ gap_days }} days apart{% endif %}.
+    </li>
+    {% for w in warnings %}<li class="warn"><strong>Warning.</strong> {{ w }}</li>{% endfor %}
+    {% for p in problems %}<li class="warn"><strong>Cannot install.</strong> {{ p }}</li>{% endfor %}
+    <li>
+      Image: <a class="mono" href="{{ image.url }}" rel="noreferrer">{{ image.file }}</a>, {{ mb(image.size) }}.
+      {% if facts.partition %}It fills {{ (100 * image.size / facts.partition)|round|int }}% of the router's {{ mb(facts.partition) }} firmware partition.{% endif %}
+      {% if facts.mem_avail %}The router has {{ mb(facts.mem_avail) }} of memory free to hold it.{% endif %}
+    </li>
+    <li class="{{ 'warn' if status.clients else '' }}">
+      <strong>{{ status.clients }} Wi-Fi client{{ "s" if status.clients != 1 }}</strong> connected right now.
+      The router is offline for several minutes while it writes the image and reboots.
+    </li>
+    <li>Settings are kept and backed up first. The image is checksummed on the router before it is written, and the router reboots only if the write succeeds.</li>
+    <li>A build that fails to boot cannot be undone from here. Recovery is through the router's bootloader with a cable, so know that procedure for this model before installing.</li>
+  </ul>
+
+  {% if problems %}
+    <p><a class="button" href="/firmware">Back</a></p>
+  {% else %}
+    <form method="post" action="/devices/{{ dev.id }}/firmware/install">
+      <input type="hidden" name="build" value="{{ target.build }}">
+      {% if warnings %}
+      <p><label><input type="checkbox" name="acknowledged" value="1" required> I have read the warning{{ "s" if warnings|length != 1 }} and want to install r{{ target.build }} anyway.</label></p>
+      {% endif %}
+      <div class="confirm-row">
+        <button class="danger-fill">Install and reboot</button>
+        <a class="button" href="/firmware">Cancel</a>
+      </div>
+    </form>
+  {% endif %}
+{% endblock %}

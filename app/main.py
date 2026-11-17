@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import backups, config, db, nvram, profile, router, sync
+from . import backups, config, db, firmware, nvram, profile, router, sync
 
 log = logging.getLogger("portal")
 BASE = Path(__file__).parent
@@ -114,6 +114,25 @@ async def _poller():
         await asyncio.sleep(config.POLL_INTERVAL)
 
 
+async def _firmware_watch():
+    """Check the download site for a newer build every FIRMWARE_CHECK_HOURS."""
+    interval = config.FIRMWARE_CHECK_HOURS * 3600
+    while True:
+        info = firmware.latest()
+        wait = interval - (time.time() - info["checked_at"]) if info else 0
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            info = await firmware.check()
+            log.info("latest DD-WRT build is r%s", info["build"])
+        except firmware.FirmwareError as exc:
+            log.warning("firmware check failed: %s", exc)
+            await asyncio.sleep(1800)
+        except Exception:
+            log.exception("firmware check failed")
+            await asyncio.sleep(1800)
+
+
 @asynccontextmanager
 async def lifespan(app):
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
@@ -121,9 +140,10 @@ async def lifespan(app):
     db.init()
     sync.migrate()
     router.portal_key()
-    task = asyncio.create_task(_poller())
+    tasks = [asyncio.create_task(_poller()), asyncio.create_task(_firmware_watch())]
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
 
 
 app = FastAPI(title="DD-WRT Portal", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -145,6 +165,7 @@ def _context():
     summary = db.backup_summary()
     now = time.time()
     managed = sync.anything_managed(devices)
+    latest = firmware.latest()
     for d in devices:
         stale = not d["last_ok"] or now - d["last_ok"] > 3 * config.POLL_INTERVAL
         d["online"] = bool(d["status"]) and not d["error"] and not stale
@@ -153,6 +174,7 @@ def _context():
         plan = sync.plan(d) if managed else None
         d["drift"] = None if plan is None else len(plan.changes)
         d["unsupported"] = plan.unsupported if plan else []
+        d["firmware"] = firmware.state(d, latest)
     return {
         "devices": devices,
         "managed": managed,
@@ -747,6 +769,168 @@ async def sync_apply_all():
     _spawn(_apply_many(todo))
     names = ", ".join(_label(d) for d in todo)
     return _back(msg=f"Applying managed settings to {names}, one router at a time.")
+
+
+# --- firmware -----------------------------------------------------------------------
+
+
+@app.get("/firmware")
+async def firmware_page(request: Request, msg: str = "", err: str = ""):
+    ctx = _context()
+    info = firmware.latest()
+    for d in ctx["devices"]:
+        d["images"] = []
+        folder = (d["firmware"].get("row") or {}).get("folder") or d["firmware"].get("suggestion")
+        d["folder"] = folder
+        if info and folder in info["folders"] and d["firmware"]["status"] in ("unmatched", "missing"):
+            try:
+                d["images"] = await firmware.folder_images(info["path"], folder)
+            except firmware.FirmwareError:
+                pass
+            d["suggested_file"] = firmware.suggest_file(d["images"])
+    index = firmware.builds()
+    for d in ctx["devices"]:
+        build = (d["status"] or {}).get("build")
+        d["running_on"] = firmware.running_date(d["status"], index)
+        failed = [r["build"] for r in firmware.failures((d["status"] or {}).get("model"))]
+        d["failed_from"] = min(failed, default=None)
+        d["next"] = firmware.suggest_next(build, d["running_on"], index, below=d["failed_from"])
+        d["newer"] = [b for b in index if build and b["build"] > build]
+        d["fw_event"] = next((e for e in db.list_events(d["id"], 10) if e["message"].startswith("Firmware")), None)
+    ctx |= {
+        "latest": info, "check_hours": config.FIRMWARE_CHECK_HOURS, "msg": msg, "err": err,
+        "limit": config.FIRMWARE_MAX_JUMP_DAYS, "any_busy": any(d["busy"] for d in ctx["devices"]),
+    }
+    return templates.TemplateResponse(request, "firmware.html", ctx)
+
+
+@app.post("/firmware/check")
+async def firmware_check():
+    try:
+        info = await firmware.check()
+    except firmware.FirmwareError as exc:
+        return _back("/firmware", err=str(exc))
+    return _back("/firmware", msg=f"The latest build is r{info['build']}, published {info['date']}.")
+
+
+@app.post("/devices/{device_id}/firmware")
+async def firmware_match(device_id: int, folder: str = Form(""), file: str = Form("")):
+    """Choose the download folder for a router, then confirm the image file in it."""
+    dev = _device_or_404(device_id)
+    info = firmware.latest()
+    if not info:
+        return _back("/firmware", err="Check for the latest build first.")
+    folder, file = folder.strip(), file.strip()
+    if folder not in info["folders"]:
+        return _back("/firmware", err=f"r{info['build']} has no folder named '{folder}'.")
+    try:
+        images = dict(await firmware.folder_images(info["path"], folder))
+    except firmware.FirmwareError as exc:
+        return _back("/firmware", err=str(exc))
+    if file not in images:
+        # Folder chosen (or changed) but no valid file yet: remember it and ask for the file.
+        db.set_firmware_map(device_id, folder, "", confirmed=False)
+        return _back("/firmware", msg=f"Folder set for {_label(dev)}. Now choose its image file.")
+    db.set_firmware_map(device_id, folder, firmware.to_pattern(file, info["build"]), confirmed=True)
+    await firmware.resolve(device_id, info)
+    return _back("/firmware", msg=f"{_label(dev)} will use {folder}/{file}.")
+
+
+@app.post("/devices/{device_id}/firmware/clear")
+async def firmware_unmatch(device_id: int):
+    dev = _device_or_404(device_id)
+    db.set_firmware_map(device_id, "", "", confirmed=False)
+    return _back("/firmware", msg=f"Image choice cleared for {_label(dev)}.")
+
+
+async def _install_plan(dev, build):
+    """Everything the install confirmation shows. Raises FirmwareError or RouterError."""
+    row = db.get_firmware_map(dev["id"])
+    if not row or not row["confirmed"]:
+        raise firmware.FirmwareError(f"Choose the image for {_label(dev)} first.")
+    index = firmware.builds()
+    target = firmware.find_build(build, index)
+    if not target:
+        raise firmware.FirmwareError(f"The download site lists no build r{build}. Use Check now to refresh the list.")
+    status = await router.collect(dev)
+    image = await firmware.find_image(target, row)
+    facts = firmware.parse_flash_facts(await router.flash_facts(dev))
+    judged = firmware.assess(status["build"], firmware.running_date(status, index), target)
+    known_bad = firmware.failure_warning(status["model"], target["build"], firmware.failures(status["model"]))
+    if known_bad:
+        judged["warnings"].append(known_bad)
+    return {
+        "target": target, "image": image, "status": status, "facts": facts,
+        "running_on": firmware.running_date(status, index),
+        "problems": ([judged["blocked"]] if judged["blocked"] else []) + firmware.flash_problems(facts, image["size"]),
+        "warnings": judged["warnings"], "gap_days": judged["gap_days"],
+    }
+
+
+@app.get("/devices/{device_id}/firmware/install")
+async def firmware_install_confirm(request: Request, device_id: int, build: int):
+    dev = _device_or_404(device_id)
+    if device_id in backups.busy:
+        return _back("/firmware", err=f"{_label(dev)} is busy: {backups.busy[device_id]}")
+    try:
+        plan = await _install_plan(dev, build)
+    except (firmware.FirmwareError, router.RouterError) as exc:
+        return _back("/firmware", err=str(exc))
+    ctx = plan | {"dev": dev, "label": plan["status"]["name"] or dev["host"], "limit": config.FIRMWARE_MAX_JUMP_DAYS}
+    return templates.TemplateResponse(request, "firmware_install.html", ctx)
+
+
+@app.post("/devices/{device_id}/firmware/install")
+async def firmware_install(device_id: int, build: int = Form(...), acknowledged: str = Form("")):
+    dev = _device_or_404(device_id)
+    if device_id in backups.busy:
+        return _back("/firmware", err=f"{_label(dev)} is busy: {backups.busy[device_id]}")
+    backups.busy[device_id] = "Preparing the firmware update"
+    try:
+        plan = await _install_plan(dev, build)
+        if plan["problems"]:
+            raise firmware.FirmwareError(" ".join(plan["problems"]))
+        if plan["warnings"] and not acknowledged:
+            raise firmware.FirmwareError("Tick the box to accept the warning before installing.")
+    except (firmware.FirmwareError, router.RouterError) as exc:
+        backups.busy.pop(device_id, None)
+        return _back("/firmware", err=str(exc))
+    except BaseException:
+        backups.busy.pop(device_id, None)
+        raise
+    dev["status"] = plan["status"]
+    _spawn(firmware.install(dev, plan["target"], plan["image"], time.time()))
+    return _back("/firmware", msg=f"Installing r{build} on {_label(dev)}. This page follows its progress.")
+
+
+# --- Wi-Fi clients ----------------------------------------------------------------
+
+WEAK_SIGNAL = -75  # dBm; below this a client is usually better served by another access point
+
+
+@app.get("/clients")
+async def clients_page(request: Request, msg: str = "", err: str = ""):
+    ctx = _context()
+    names = db.client_names()
+    rows = []
+    for d in ctx["devices"]:
+        if not d["online"]:
+            continue
+        for c in d["status"].get("stations", []):
+            rows.append(c | {"router": _label(d), "name": names.get(c["mac"], ""), "weak": (c["signal"] or 0) < WEAK_SIGNAL})
+    rows.sort(key=lambda c: (c["router"], c["band"] or "", -(c["signal"] or -999)))
+    offline = [_label(d) for d in ctx["devices"] if not d["online"]]
+    ctx |= {"rows": rows, "offline": offline, "weak_below": WEAK_SIGNAL, "msg": msg, "err": err}
+    return templates.TemplateResponse(request, "clients.html", ctx)
+
+
+@app.post("/clients/name")
+async def name_client(mac: str = Form(...), name: str = Form("")):
+    mac = mac.strip().lower()
+    if not re.fullmatch(r"([0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+        return _back("/clients", err="That is not a hardware address.")
+    db.set_client_name(mac, name.strip()[:60])
+    return _back("/clients")
 
 
 @app.get("/api/devices")

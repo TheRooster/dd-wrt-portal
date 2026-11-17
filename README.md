@@ -40,6 +40,33 @@ changes and the connected clients first, then backs up, writes, verifies,
 saves, and reboots the router. "Apply to all" does one router at a time and
 stops if one does not come back in sync.
 
+## Firmware
+
+The portal checks the DD-WRT download site every `FIRMWARE_CHECK_HOURS` for
+the newest build. Each router is matched to a model folder and image file on
+the Firmware page; the portal suggests both from the model name and a person
+confirms. Routers with a newer image available are flagged. DD-WRT publishes
+no checksums, so images are trusted only as far as the HTTPS download.
+
+Installing is done one build at a time. Enter the build to install; the page
+suggests the newest build published within `FIRMWARE_MAX_JUMP_DAYS` of the
+running one. A larger jump, or a downgrade, needs an extra confirmation. The
+install backs up the settings, downloads the image, copies it to the router's
+RAM disk, checksums it there, and runs DD-WRT's `write <image> linux`. The
+router reboots only if the write succeeds, and the portal then confirms the
+new build number. An image larger than the router's firmware partition or its
+free memory is refused. A build that fails to boot needs the model's
+bootloader recovery (for Netgear, `nmrpflash`); the portal cannot undo it. A
+build that fails to boot is recorded for that model: it and newer builds are
+no longer suggested and carry a warning.
+
+## Wi-Fi clients
+
+The Clients page lists every connected Wi-Fi client with its router, band and
+signal, taken from the regular status poll. Clients are identified by hardware
+address and can be given a name, which the portal stores. Link rate and
+connection time are shown on routers whose driver reports them.
+
 ## State
 
 Everything lives in the `/data` volume: `portal.db` (SQLite), `id_ed25519`
@@ -73,6 +100,11 @@ unreadable.
 | `DATA_DIR` | `/data` | Where the database and SSH key are kept |
 | `POLL_INTERVAL` | `60` | Seconds between status polls |
 | `CONFIG_INTERVAL` | `300` | Seconds between full config checks (backup if changed, drift refresh) |
+| `FIRMWARE_CHECK_HOURS` | `12` | Hours between checks for a newer build |
+| `FIRMWARE_URL` | DD-WRT betas | Base URL of the download site |
+| `FIRMWARE_MAX_JUMP_DAYS` | `62` | Days between running and requested build before a warning |
+| `FIRMWARE_WRITE_TIMEOUT` | `900` | Seconds allowed for the router to write an image |
+| `FIRMWARE_BOOT_TIMEOUT` | `600` | Seconds allowed for the router to boot the new build |
 | `BACKUP_KEEP` | `200` | Stored backups kept per router |
 | `BACKUP_KEY` | generated | Fernet key for encrypting stored backups |
 | `SSH_CONNECT_TIMEOUT` | `10` | Seconds |

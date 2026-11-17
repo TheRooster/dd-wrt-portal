@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Wi-Fi clients{% endblock %}
+{% block main %}
+  <div class="page-head">
+    <div>
+      <h2>Wi-Fi clients</h2>
+      <p class="sub">{{ rows|length }} connected across {{ online }} online router{{ "s" if online != 1 }}. Refreshed every {{ poll_interval }} seconds.</p>
+    </div>
+  </div>
+  {% if offline %}<p class="notice busy">Not shown, because the router is offline: {{ offline|join(", ") }}.</p>{% endif %}
+  <p class="hint">The routers are access points and do not hand out addresses, so clients are identified by hardware address. Give one a name to recognise it. A signal below {{ weak_below }} dBm is marked weak.</p>
+
+  {% if rows %}
+  <div class="panel flush scroll">
+    <table class="list managed">
+      <thead><tr><th>Name</th><th>Hardware address</th><th>Router</th><th>Band</th><th class="num">Signal</th><th class="num">Link rate</th><th class="num">Connected</th></tr></thead>
+      <tbody>
+      {% for c in rows %}
+        <tr>
+          <td>
+            <form method="post" action="/clients/name" class="match">
+              <input type="hidden" name="mac" value="{{ c.mac }}">
+              <input name="name" value="{{ c.name }}" placeholder="Unnamed" maxlength="60" aria-label="Name for {{ c.mac }}">
+              <button class="quiet">Save</button>
+            </form>
+          </td>
+          <td class="mono">{{ c.mac }}</td>
+          <td>{{ c.router }}</td>
+          <td>{{ c.band or c.radio }}</td>
+          <td class="num">{% if c.signal is not none %}{{ c.signal }} dBm{% if c.weak %} <span class="flag">Weak</span>{% endif %}{% else %}–{% endif %}</td>
+          <td class="num">{% if c.rate_mbps is not none %}{{ c.rate_mbps|round|int }} Mbit/s{% else %}–{% endif %}</td>
+          <td class="num">{{ c.connected_s|duration if c.connected_s is not none else "–" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No Wi-Fi clients connected.</p>
+  {% endif %}
+{% endblock %}

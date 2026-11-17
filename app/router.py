@@ -250,3 +250,58 @@ async def commit(dev):
 async def reboot(dev):
     """Start a reboot two seconds from now, so this SSH session can close cleanly."""
     await run(dev, "(sleep 2; reboot) </dev/null >/dev/null 2>&1 &")
+
+
+# --- firmware ---------------------------------------------------------------
+
+FW = "/tmp/.portal-firmware"
+
+FLASH_FACTS_SCRIPT = (
+    'command -v write >/dev/null 2>&1 && echo write=yes; cat /proc/mtd; '
+    "grep -E '^(MemFree|MemAvailable):' /proc/meminfo; true"
+)
+
+# The image is checksummed on the router before anything can write it.
+UPLOAD_SCRIPT = f"""
+umask 077; rm -f {FW}.rc {FW}.log {FW}.bin
+cat > {FW}.bin
+if [ "$(md5sum < {FW}.bin | cut -d' ' -f1)" = "%s" ]; then echo UPLOAD_OK; else rm -f {FW}.bin; echo BAD_TRANSFER; fi
+"""
+
+# `write <file> linux` is what DD-WRT's own web upgrade runs. It is detached so
+# that a dropped SSH session or a portal restart cannot interrupt it.
+START_FLASH_SCRIPT = f"""
+[ -s {FW}.bin ] || {{ echo NO_IMAGE; exit 0; }}
+(write {FW}.bin linux > {FW}.log 2>&1; echo $? > {FW}.rc; rm -f {FW}.bin) </dev/null >/dev/null 2>&1 &
+echo STARTED
+"""
+
+FLASH_RESULT_SCRIPT = f"cat {FW}.rc 2>/dev/null; echo @@; tail -n 3 {FW}.log 2>/dev/null; true"
+
+
+async def flash_facts(dev):
+    return await run(dev, FLASH_FACTS_SCRIPT)
+
+
+async def upload_firmware(dev, data):
+    """Copy a firmware image to the router's RAM disk and verify it arrived intact."""
+    script = UPLOAD_SCRIPT % hashlib.md5(data).hexdigest()
+    try:
+        async with _connect(dev) as conn:
+            result = await conn.run(script, input=data, encoding=None, check=False, timeout=600)
+    except (OSError, asyncssh.Error, TimeoutError) as exc:
+        raise RouterError(_explain(exc, dev["host"])) from None
+    if b"UPLOAD_OK" not in (result.stdout or b""):
+        raise RouterError(f"{dev['host']}: the image was damaged in transfer and was removed from the router")
+
+
+async def start_flash(dev):
+    if "STARTED" not in await run(dev, START_FLASH_SCRIPT):
+        raise RouterError(f"{dev['host']}: the image is no longer on the router; nothing was written")
+
+
+async def flash_result(dev):
+    """(exit code or None while still writing, last lines of the writer's output)."""
+    code, _, tail = (await run(dev, FLASH_RESULT_SCRIPT)).partition("@@")
+    tail = " ".join(tail.split())[-300:]
+    return (int(code) if code.strip().lstrip("-").isdigit() else None), tail

@@ -48,6 +48,27 @@ else
     echo "wl$x|$ch|$(nvram get wl${x}_nbw)|$n|$(nvram get wl${x}_akm)|$(nvram get wl${x}_ssid)"
   done
 fi
+echo "@@stations"
+# One line per connected Wi-Fi client: radio|mac|signal dBm|tx Mbit/s|seconds connected
+if command -v iw >/dev/null 2>&1; then
+  for i in $(iw dev | awk '$1=="Interface"{print $2}' | grep -E '^wlan[0-9]+$' | sort); do
+    iw dev $i station dump | awk -v r=$i '
+      function out() { if (m) print r "|" m "|" s "|" t "|" c }
+      $1=="Station" { out(); m=$2; s=""; t=""; c="" }
+      $1=="signal:" { s=$2 }
+      $1=="tx" && $2=="bitrate:" { t=$3 }
+      $1=="connected" && $2=="time:" { c=$3 }
+      END { out() }'
+  done
+else
+  for x in 0 1 2; do
+    i=$(nvram get wl${x}_ifname)
+    [ -n "$i" ] || continue
+    for m in $(wl -i $i assoclist 2>/dev/null | awk '{print $2}'); do
+      echo "wl$x|$m|$(wl -i $i rssi $m 2>/dev/null)||"
+    done
+  done
+fi
 echo "@@end"
 """ % NVRAM_KEYS
 
@@ -112,6 +133,28 @@ def parse(text):
         )
     radios.sort(key=lambda r: (r["channel"] is None, r["channel"] or 0))
 
+    bands = {r["name"]: r["band"] for r in radios}
+    stations = []
+    for line in s.get("stations", []):
+        parts = line.split("|")
+        if len(parts) != 5 or not re.fullmatch(r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", parts[1]):
+            continue
+        radio, mac, signal, rate, connected = parts
+        try:
+            rate = float(rate)
+        except ValueError:
+            rate = None
+        stations.append(
+            {
+                "mac": mac.lower(),
+                "radio": radio,
+                "band": bands.get(radio),
+                "signal": _int(signal),
+                "rate_mbps": rate,
+                "connected_s": _int(connected),
+            }
+        )
+
     release = " ".join(s.get("release", []))
     uptime = s.get("uptime", ["0"])[0].split()
     load = s.get("loadavg", [""])[0].split()
@@ -132,6 +175,7 @@ def parse(text):
         "nvram_free": nvram_free,
         "radios": radios,
         "clients": sum(r["clients"] for r in radios),
+        "stations": stations,
         "telnet_enabled": nv.get("telnetd_enable") == "1",
         "ssh_password_auth": nv.get("sshd_passwd_auth") == "1",
         "remote_syslog": nv.get("syslogd_enable") == "1",

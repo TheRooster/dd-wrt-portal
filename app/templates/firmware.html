@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Firmware{% endblock %}
+{% macro name(d) %}{{ (d.status.name if d.status else none) or d.host }}{% endmacro %}
+{% block main %}
+  <div class="page-head">
+    <div>
+      <h2>Firmware</h2>
+      {% if latest %}
+      <p class="sub">Latest DD-WRT build: <strong>r{{ latest.build }}</strong>, published {{ latest.date }}. Checked {{ latest.checked_at|ago }}; rechecked every {{ check_hours|round|int }} hours.</p>
+      {% else %}
+      <p class="sub">The download site has not been checked yet.</p>
+      {% endif %}
+    </div>
+    <form method="post" action="/firmware/check"><button class="secondary">Check now</button></form>
+  </div>
+  <p class="hint">Update in steps. A jump of more than {{ limit }} days between builds needs an extra confirmation, and the suggested build stays inside that limit. DD-WRT publishes no checksums, so an image can only be trusted as far as the HTTPS download from dd-wrt.com.</p>
+
+  {% if devices and latest %}
+  <div class="panel flush scroll">
+    <table class="list managed">
+      <thead><tr><th>Router</th><th>Running</th><th>Status</th><th>Image on the download site</th><th>Install</th></tr></thead>
+      <tbody>
+      {% for d in devices %}
+        {% set f = d.firmware %}
+        <tr>
+          <td>{{ name(d) }}<div class="hint">{{ d.status.model if d.status else "" }}</div></td>
+          <td>{% if d.status %}r{{ d.status.build }}<div class="hint">{{ d.running_on or d.status.release or "" }}</div>{% else %}–{% endif %}</td>
+          <td>
+            {% if f.status == "available" %}<span class="flag">Update available</span><div class="hint">r{{ latest.build }} · {{ "%.1f"|format(f.size / 1048576) }} MB</div>
+            {% elif f.status == "current" %}<span class="insync">Up to date</span>
+            {% elif f.status == "missing" %}<span class="unsupported-text">No image in r{{ latest.build }}</span><div class="hint">The chosen file is not in the latest build. Choose again or wait for the next build.</div>
+            {% else %}<span class="dim">Image not chosen yet</span>{% endif %}
+          </td>
+          <td>
+            {% if f.status in ("available", "current") %}
+              <a class="mono" href="{{ f.url }}" rel="noreferrer">{{ f.row.folder }}/{{ f.row.file }}</a>
+              <form method="post" action="/devices/{{ d.id }}/firmware/clear" class="inline-form"><button class="quiet">Change</button></form>
+            {% else %}
+              <form method="post" action="/devices/{{ d.id }}/firmware" class="match">
+                <label>Folder
+                  <input name="folder" list="folders" value="{{ d.folder or '' }}" placeholder="e.g. netgear-r6220" required>
+                </label>
+                {% if d.images %}
+                <label>Image file
+                  <select name="file" required>
+                    <option value="">Choose…</option>
+                    {% for n, size in d.images %}
+                    <option value="{{ n }}" {{ "selected" if n == d.suggested_file }}>{{ n }} ({{ "%.1f"|format(size / 1048576) }} MB)</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <button>Confirm</button>
+                {% else %}
+                <button class="secondary">Show images</button>
+                {% endif %}
+              </form>
+              {% if d.images %}<div class="hint">Suggested from the model name. Use a "webflash" image to upgrade a router already running DD-WRT; "factory" images are for converting from the vendor's firmware.</div>{% endif %}
+            {% endif %}
+          </td>
+          <td>
+            {% if d.busy %}<span class="flag">{{ d.busy }}…</span>
+            {% elif f.status not in ("available", "current") %}<span class="dim">Choose the image first</span>
+            {% elif not d.online %}<span class="dim">Router offline</span>
+            {% elif not d.newer %}<span class="dim">No newer build</span>
+            {% else %}
+              <form method="get" action="/devices/{{ d.id }}/firmware/install" class="match">
+                <label>Build
+                  <input name="build" type="number" list="builds-{{ d.id }}" value="{{ d.next.build if d.next else '' }}" min="1" required class="build">
+                </label>
+                <button class="secondary">Review…</button>
+              </form>
+              <datalist id="builds-{{ d.id }}">{% for b in d.newer %}<option value="{{ b.build }}">{{ b.date }}</option>{% endfor %}</datalist>
+              {% if d.next %}<div class="hint">Suggested: r{{ d.next.build }}, published {{ d.next.date }}.</div>{% endif %}
+              {% if d.failed_from %}<div class="hint bad-text">r{{ d.failed_from }} did not boot on this model. Builds from r{{ d.failed_from }} on are not suggested.</div>{% endif %}
+            {% endif %}
+            {% if d.fw_event and not d.busy %}<div class="hint {{ '' if d.fw_event.ok else 'bad-text' }}">{{ d.fw_event.message }} <span class="dim">({{ d.fw_event.at|ago }})</span></div>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <datalist id="folders">{% for f in latest.folders %}<option value="{{ f }}">{% endfor %}</datalist>
+  {% elif not devices %}
+  <p class="empty">No routers enrolled yet.</p>
+  {% endif %}
+{% endblock %}
+{% block script %}{% if any_busy %}<script>setTimeout(() => location.replace(location.pathname), 5000);</script>{% endif %}{% endblock %}

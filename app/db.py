@@ -43,11 +43,28 @@ CREATE TABLE IF NOT EXISTS backups (
     blob         BLOB NOT NULL    -- encrypted nvram backup file
 );
 CREATE INDEX IF NOT EXISTS backups_device ON backups (device_id, taken_at);
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS firmware_map (
+    device_id   INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    folder      TEXT NOT NULL,    -- model folder on the download site
+    pattern     TEXT NOT NULL,    -- image file name, with {build} for the build number
+    confirmed   INTEGER NOT NULL DEFAULT 0,
+    found_build INTEGER,          -- the build this was last looked up in
+    file        TEXT,             -- the image found in that build, if any
+    size        INTEGER
+);
 CREATE TABLE IF NOT EXISTS managed (
     scope TEXT NOT NULL,          -- 'fleet' or 'device:<id>'
     key   TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY (scope, key)
+);
+CREATE TABLE IF NOT EXISTS client_names (
+    mac  TEXT PRIMARY KEY,        -- lower case
+    name TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
     id        INTEGER PRIMARY KEY,
@@ -267,3 +284,65 @@ def set_keymap(device_id, rows):
             [(device_id, k, v) for k, v in rows.items()],
         )
         conn.execute("UPDATE devices SET mapped = 1 WHERE id = ?", (device_id,))
+
+
+# --- firmware -------------------------------------------------------------------
+
+
+def get_kv(key):
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_kv(key, value):
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def get_firmware_map(device_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM firmware_map WHERE device_id = ?", (device_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_firmware_map(device_id, folder, pattern, confirmed):
+    """Record which image a router uses; clears what was found for the old choice."""
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO firmware_map (device_id, folder, pattern, confirmed) VALUES (?, ?, ?, ?)
+               ON CONFLICT(device_id) DO UPDATE SET folder = excluded.folder, pattern = excluded.pattern,
+                   confirmed = excluded.confirmed, found_build = NULL, file = NULL, size = NULL""",
+            (device_id, folder, pattern, int(confirmed)),
+        )
+
+
+def set_firmware_found(device_id, build, file, size):
+    with connect() as conn:
+        conn.execute(
+            "UPDATE firmware_map SET found_build = ?, file = ?, size = ? WHERE device_id = ?",
+            (build, file, size, device_id),
+        )
+
+
+# --- Wi-Fi client names ----------------------------------------------------------
+
+
+def client_names():
+    with connect() as conn:
+        return {r["mac"]: r["name"] for r in conn.execute("SELECT mac, name FROM client_names")}
+
+
+def set_client_name(mac, name):
+    """Name a client by its hardware address; an empty name removes it."""
+    with connect() as conn:
+        if name:
+            conn.execute(
+                "INSERT INTO client_names (mac, name) VALUES (?, ?) ON CONFLICT(mac) DO UPDATE SET name = excluded.name",
+                (mac, name),
+            )
+        else:
+            conn.execute("DELETE FROM client_names WHERE mac = ?", (mac,))

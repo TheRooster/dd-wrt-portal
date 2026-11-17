@@ -61,3 +61,17 @@ def test_truncated_output_is_rejected():
 def test_ssid_may_contain_separator():
     text = "@@radios\nwl0|6|20|3|psk2|Odd|Name\n@@end\n"
     assert parse(text)["radios"][0]["ssid"] == "Odd|Name"
+
+
+def test_stations_from_mac80211_and_broadcom():
+    s = load("r6220.txt")
+    assert s["stations"][0] == {
+        "mac": "02:00:00:00:00:a1", "radio": "wlan0", "band": "5 GHz",
+        "signal": -58, "rate_mbps": 866.7, "connected_s": 5321,
+    }
+    b = load("rt-ac66u.txt")
+    assert [(c["mac"], c["band"], c["signal"], c["rate_mbps"]) for c in b["stations"]] == [
+        ("02:00:00:00:00:b1", "2.4 GHz", -41, None),
+        ("02:00:00:00:00:b2", "5 GHz", -36, None),
+    ]
+    assert load("tew818dru.txt")["stations"] == []
