@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Channels{% endblock %}
+{% block main %}
+  <div class="page-head">
+    <div>
+      <h2>Channels</h2>
+      <p class="sub">{% if oldest %}Oldest survey: {{ oldest|ago }}.{% else %}No survey yet.{% endif %} Surveys run only when asked.</p>
+    </div>
+    <form method="post" action="/channels/scan"><button class="secondary">Survey now</button></form>
+  </div>
+  {% if offline %}<p class="notice busy">Left out, because the router is offline: {{ offline|join(", ") }}.</p>{% endif %}
+  <p class="hint">A survey makes each router listen on every channel for a few seconds; clients may pause briefly. A channel's score adds up the neighbouring networks on or overlapping it, weighted by signal: lower is better. The plan gives each router its quietest channel and keeps your own routers on separate channels. Set channels on the <a href="/settings">Managed settings</a> page.</p>
+
+  {% for band, rows in bands.items() %}
+  <h3>{{ band }}</h3>
+  {% if rows %}
+  <div class="panel flush scroll">
+    <table class="list managed">
+      <thead><tr><th>Router</th><th>Now</th><th>Recommended</th><th>Candidates: score (networks)</th><th>Strongest neighbour</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.router }}<div class="hint">{{ r.ssid }}</div></td>
+          <td>{% if r.channel %}Channel {{ r.channel }}, {{ r.width }} MHz{% if r.surveyed %}<div class="hint">score {{ r.current[0] }} ({{ r.current[1] }} network{{ "s" if r.current[1] != 1 }})</div>{% endif %}{% if r.radar %}<div><span class="flag">Radar channel</span></div>{% endif %}{% else %}–{% endif %}</td>
+          <td>{% if r.recommended == r.channel %}<span class="insync">Keep {{ r.channel }}</span>{% else %}<span class="flag">Change to {{ r.recommended }}</span>{% endif %}</td>
+          <td>{% if r.surveyed %}{% for o in r.options %}<span class="mono">{{ o.channel }}</span>: {{ o.score }} ({{ o.networks }}){{ " · " if not loop.last }}{% endfor %}{% else %}<span class="dim">No survey data for this radio. Planned only to keep your routers apart.</span>{% endif %}</td>
+          <td>{% if r.strongest %}{{ r.strongest.ssid or "(hidden)" }}<div class="hint">channel {{ r.strongest.channel }}, {{ r.strongest.rssi }} dBm</div>{% else %}–{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No radios on this band are online.</p>
+  {% endif %}
+  {% endfor %}
+{% endblock %}

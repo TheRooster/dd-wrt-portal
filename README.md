@@ -67,6 +67,16 @@ signal, taken from the regular status poll. Clients are identified by hardware
 address and can be given a name, which the portal stores. Link rate and
 connection time are shown on routers whose driver reports them.
 
+## Channels
+
+The Channels page surveys the neighbourhood on request (DD-WRT's
+`site_survey` on each radio) and scores each candidate channel by the
+networks on or overlapping it, weighted by signal. Candidates are 1, 6 and 11
+on 2.4 GHz and the non-radar channels on 5 GHz. The plan tries every
+combination and picks the one with the least interference while keeping the
+fleet's own routers on separate channels. It only recommends; channels are
+set on the Managed settings page.
+
 ## State
 
 Everything lives in the `/data` volume: `portal.db` (SQLite), `id_ed25519`

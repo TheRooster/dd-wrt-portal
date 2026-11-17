@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import backups, config, db, firmware, nvram, profile, router, sync
+from . import backups, channels, config, db, firmware, nvram, profile, router, sync
 
 log = logging.getLogger("portal")
 BASE = Path(__file__).parent
@@ -901,6 +901,60 @@ async def firmware_install(device_id: int, build: int = Form(...), acknowledged:
     dev["status"] = plan["status"]
     _spawn(firmware.install(dev, plan["target"], plan["image"], time.time()))
     return _back("/firmware", msg=f"Installing r{build} on {_label(dev)}. This page follows its progress.")
+
+
+# --- channel planning -----------------------------------------------------------------
+
+
+@app.get("/channels")
+async def channels_page(request: Request, msg: str = "", err: str = ""):
+    ctx = _context()
+    bands = {"2.4 GHz": [], "5 GHz": []}
+    oldest = None
+    for d in ctx["devices"]:
+        survey = channels.load(d["id"])
+        if survey:
+            oldest = min(oldest or survey["at"], survey["at"])
+        for r in (d["status"] or {}).get("radios", []):
+            if r["band"] not in bands or not d["online"]:
+                continue
+            seen = ((survey or {}).get("radios") or {}).get(r["name"]) or {}
+            bands[r["band"]].append({
+                "key": f"{d['id']}:{r['name']}", "router": _label(d), "band": r["band"], "ssid": r["ssid"],
+                "channel": r["channel"], "width": r["width_mhz"] or 20, "bssid": seen.get("bssid", ""),
+                "networks": seen.get("networks", []), "allowed": seen.get("allowed", []),
+                "surveyed": bool(seen.get("networks")),
+            })
+    for rows in bands.values():
+        result = channels.plan(rows)
+        ours = {r["bssid"] for r in rows}
+        for row in rows:
+            row |= result[row["key"]]
+            row["radar"] = bool(row["channel"]) and row["channel"] in channels.DFS
+            others = [n for n in row["networks"] if n["bssid"] not in ours]
+            row["strongest"] = max(others, key=lambda n: n["rssi"], default=None)
+    ctx |= {
+        "bands": bands, "oldest": oldest, "msg": msg, "err": err,
+        "offline": [_label(d) for d in ctx["devices"] if not d["online"]],
+    }
+    return templates.TemplateResponse(request, "channels.html", ctx)
+
+
+@app.post("/channels/scan")
+async def channels_scan():
+    done, failed = [], []
+    for dev in db.list_devices():
+        if dev["id"] in backups.busy or dev["error"]:  # busy or offline at the last poll
+            continue
+        try:
+            channels.save(dev["id"], channels.parse_survey(await router.survey(dev, channels.SURVEY_SCRIPT)))
+            done.append(_label(dev))
+        except (router.RouterError, ValueError) as exc:
+            failed.append(f"{_label(dev)} ({exc})")
+    if failed:
+        surveyed = f" Surveyed: {', '.join(done)}." if done else ""
+        return _back("/channels", err="Survey failed on " + "; ".join(failed) + "." + surveyed)
+    return _back("/channels", msg=f"Surveyed {len(done)} router{'s' if len(done) != 1 else ''}.")
 
 
 # --- Wi-Fi clients ----------------------------------------------------------------

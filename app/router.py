@@ -305,3 +305,8 @@ async def flash_result(dev):
     code, _, tail = (await run(dev, FLASH_RESULT_SCRIPT)).partition("@@")
     tail = " ".join(tail.split())[-300:]
     return (int(code) if code.strip().lstrip("-").isdigit() else None), tail
+
+
+async def survey(dev, script):
+    """Run a site survey on every radio. Clients may pause for a second or two."""
+    return await run(dev, script, timeout=120)
