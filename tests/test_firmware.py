@@ -114,3 +114,57 @@ def test_builds_that_failed_on_a_model_warn_and_are_not_suggested():
     assert firmware.failure_warning("Netgear R6220", 66631, []) is None
     assert firmware.suggest_next(53733, "2023-09-12", INDEX, limit=62, below=54652) is None
     assert firmware.suggest_next(53323, "2023-07-15", INDEX, limit=62, below=53733)["build"] == 53562
+
+
+STEPS = [{"build": n, "date": f"2024-01-{d:02d}"} for d, n in enumerate(range(100, 111), start=1)]
+
+
+def test_bisect_picks_the_midpoint_between_good_and_failed():
+    assert firmware.bisect(100, 110, STEPS)["build"] == 105  # 9 between: 101..109
+    assert firmware.bisect(105, 110, STEPS)["build"] == 107  # 106..109
+    assert firmware.bisect(107, 110, STEPS)["build"] == 108  # 108, 109
+    assert firmware.bisect(108, 110, STEPS)["build"] == 109  # one left
+    assert firmware.bisect(109, 110, STEPS) is None
+
+
+def test_last_good_uses_running_successes_and_failed_starts():
+    failed = [{"model": "M", "build": 110, "from": 103}, {"model": "M", "build": 112, "from": 111}]
+    assert firmware.last_good(101, failed, [], 110) == 103
+    assert firmware.last_good(101, failed, [{"model": "M", "build": 105}], 110) == 105
+    assert firmware.last_good(106, failed, [], 110) == 106
+    assert firmware.last_good(None, [], [], 110) is None
+
+
+def test_recommend_after_a_failure(monkeypatch):
+    failed = [{"model": "M", "build": 110, "from": 100, "at": 0}]
+    monkeypatch.setattr(firmware, "failures", lambda model=None: failed)
+    monkeypatch.setattr(firmware, "successes", lambda model=None: [])
+    on_good = firmware.recommend(100, "2024-01-01", "M", STEPS, limit=62)
+    assert on_good["next"]["build"] == 105 and on_good["bisecting"] and on_good["good"] == 100
+    # A router recovered to an older build steps back up to the last good one first.
+    failed[0]["from"] = 105
+    below = firmware.recommend(102, "2024-01-03", "M", STEPS, limit=62)
+    assert below["next"]["build"] == 105 and not below["bisecting"]
+    failed[0]["from"] = 109
+    done = firmware.recommend(109, "2024-01-10", "M", STEPS, limit=62)
+    assert done["next"] is None and not done["bisecting"] and done["end_of_life"]
+    monkeypatch.setattr(firmware, "failures", lambda model=None: [])
+    assert firmware.recommend(100, "2024-01-01", "M", STEPS, limit=62)["next"]["build"] == 110
+
+
+def test_a_build_above_the_failure_ends_end_of_life(monkeypatch):
+    steps = STEPS + [{"build": 111, "date": "2024-01-12"}, {"build": 112, "date": "2024-01-13"}]
+    failed = [{"model": "M", "build": 110, "from": 109, "at": 0}]
+    monkeypatch.setattr(firmware, "failures", lambda model=None: failed)
+    monkeypatch.setattr(firmware, "successes", lambda model=None: [])
+    assert firmware.recommend(109, "2024-01-10", "M", steps, limit=62)["end_of_life"]
+    # r111 entered by hand, installed and booted: the failure is superseded.
+    monkeypatch.setattr(firmware, "successes", lambda model=None: [{"model": "M", "build": 111, "at": 0}])
+    after = firmware.recommend(111, "2024-01-12", "M", steps, limit=62)
+    assert not after["end_of_life"] and after["first_bad"] is None and after["next"]["build"] == 112
+    # A sibling router still on r105 steps forward, skipping the failed r110.
+    sibling = firmware.recommend(105, "2024-01-06", "M", steps, limit=62)
+    assert sibling["next"]["build"] == 112
+    assert "did not boot" in firmware.failure_warning("M", 110, failed, 105, [{"build": 111}])
+    assert firmware.failure_warning("M", 112, failed, 105, [{"build": 111}]) is None
+    assert "newer" in firmware.failure_warning("M", 112, failed, 105, [])

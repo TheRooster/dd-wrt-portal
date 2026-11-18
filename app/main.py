@@ -943,9 +943,10 @@ async def firmware_page(request: Request, msg: str = "", err: str = ""):
     for d in ctx["devices"]:
         build = (d["status"] or {}).get("build")
         d["running_on"] = firmware.running_date(d["status"], index)
-        failed = [r["build"] for r in firmware.failures((d["status"] or {}).get("model"))]
-        d["failed_from"] = min(failed, default=None)
-        d["next"] = firmware.suggest_next(build, d["running_on"], index, below=d["failed_from"])
+        plan = firmware.recommend(build, d["running_on"], (d["status"] or {}).get("model"), index)
+        d["failed_from"], d["good"], d["bisecting"] = plan["first_bad"], plan["good"], plan["bisecting"]
+        d["end_of_life"] = plan["end_of_life"]
+        d["next"] = plan["next"]
         d["newer"] = [b for b in index if build and b["build"] > build]
         d["fw_event"] = next((e for e in db.list_events(d["id"], 10) if e["message"].startswith("Firmware")), None)
     ctx |= {
@@ -1007,7 +1008,10 @@ async def _install_plan(dev, build):
     image = await firmware.find_image(target, row)
     facts = firmware.parse_flash_facts(await router.flash_facts(dev))
     judged = firmware.assess(status["build"], firmware.running_date(status, index), target)
-    known_bad = firmware.failure_warning(status["model"], target["build"], firmware.failures(status["model"]))
+    known_bad = firmware.failure_warning(
+        status["model"], target["build"], firmware.failures(status["model"]),
+        status["build"], firmware.successes(status["model"]),
+    )
     if known_bad:
         judged["warnings"].append(known_bad)
     return {

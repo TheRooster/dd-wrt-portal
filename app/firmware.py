@@ -26,6 +26,7 @@ _IMAGE = re.compile(r"\.(bin|trx|chk|img)$", re.IGNORECASE)
 LATEST = "firmware_latest"
 BUILDS = "firmware_builds"
 FAILED = "firmware_failed"
+SUCCEEDED = "firmware_succeeded"
 
 
 class FirmwareError(Exception):
@@ -168,7 +169,12 @@ def state(dev, info=None):
     if row["found_build"] != info["build"] or not row["file"]:
         return result | {"status": "missing"}
     result |= {"url": image_url(info, row), "size": row["size"]}
-    return result | {"status": "current" if running and running >= info["build"] else "available"}
+    if running and running >= info["build"]:
+        return result | {"status": "current"}
+    status = dev["status"] or {}
+    if recommend(running, None, status.get("model"), builds())["end_of_life"]:
+        return result | {"status": "end_of_life"}
+    return result | {"status": "available"}
 
 
 # --- choosing a build to install ------------------------------------------------
@@ -256,15 +262,58 @@ def record_failure(model, build, came_from):
     db.set_kv(FAILED, json.dumps(rows))
 
 
-def failure_warning(model, target, failed):
-    """A warning if `target` is at or past the oldest build that failed on this model."""
-    builds_ = sorted(r["build"] for r in failed)
-    if not builds_ or target < builds_[0]:
-        return None
-    if target in builds_:
+def successes(model=None):
+    """Installs from this portal that booted and reported the new build: [{model, build, at}]."""
+    rows = json.loads(db.get_kv(SUCCEEDED) or "[]")
+    return [r for r in rows if model is None or r["model"] == model]
+
+
+def record_success(model, build):
+    rows = [r for r in successes() if (r["model"], r["build"]) != (model, build)]
+    rows.append({"model": model, "build": build, "at": time.time()})
+    db.set_kv(SUCCEEDED, json.dumps(rows))
+
+
+def last_good(running, failed, succeeded, first_bad):
+    """The newest build below `first_bad` known to boot on this model, or None.
+
+    Known good: the running build, recorded successes, and the build each
+    failed install started from.
+    """
+    known = [r["build"] for r in succeeded] + [r["from"] for r in failed if r.get("from")]
+    if running:
+        known.append(running)
+    return max((b for b in known if b < first_bad), default=None)
+
+
+def bisect(good, first_bad, index):
+    """The build midway between a good and a failed build, or None if none lies between.
+
+    Halving the gap each try finds the first failing build in log2(n) installs.
+    """
+    between = [b for b in index if good < b["build"] < first_bad]
+    return between[(len(between) - 1) // 2] if between else None
+
+
+def active_failures(running, failed, succeeded):
+    """Failures not yet superseded: those newer than every build known to boot.
+
+    Once a build above a failure installs and boots, that failure no longer
+    blocks suggestions (the failed build itself is still never suggested).
+    """
+    top = max([r["build"] for r in succeeded] + ([running] if running else []), default=0)
+    return [r for r in failed if r["build"] > top]
+
+
+def failure_warning(model, target, failed, running=None, succeeded=()):
+    """A warning if `target` failed on this model, or is past an unsuperseded failure."""
+    if target in {r["build"] for r in failed}:
         return f"r{target} did not boot on a {model} when it was installed from this portal."
+    active = sorted(r["build"] for r in active_failures(running, failed, succeeded))
+    if not active or target < active[0]:
+        return None
     return (
-        f"r{builds_[0]} did not boot on a {model}, and r{target} is newer. The fault may still be present. "
+        f"r{active[0]} did not boot on a {model}, and r{target} is newer. The fault may still be present. "
         "Have the bootloader recovery ready."
     )
 
@@ -283,6 +332,38 @@ def suggest_next(running, running_on, index, limit=None, below=None):
         if near:
             return near[-1]
     return newer[0]
+
+
+def recommend(running, running_on, model, index, limit=None):
+    """The build to suggest next for one router: {next, first_bad, good, bisecting, end_of_life}.
+
+    With no unsuperseded failure for the model, this is the usual step. After
+    a failure, a router below the last good build steps up to it, and a router
+    on it is offered the build midway to the first failed one. If no build lies
+    between the two, the model is end of life: nothing is suggested until a
+    build above the failure has been installed and booted.
+    """
+    failed = failures(model)
+    succeeded = successes(model)
+    bad = {r["build"] for r in failed}
+    index = [b for b in index if b["build"] not in bad]
+    active = active_failures(running, failed, succeeded)
+    first_bad = min((r["build"] for r in active), default=None)
+    out = {"next": None, "first_bad": first_bad, "good": None, "bisecting": False, "end_of_life": False}
+    if first_bad is None:
+        out["next"] = suggest_next(running, running_on, index, limit)
+        return out
+    good = last_good(running, active, succeeded, first_bad)
+    out["good"] = good
+    if running and good and running < good:
+        out["next"] = suggest_next(running, running_on, index, limit, below=good + 1)
+    elif running and good and running == good:
+        out["next"] = bisect(good, first_bad, index)
+        out["bisecting"] = out["next"] is not None
+        out["end_of_life"] = out["next"] is None
+    else:
+        out["next"] = suggest_next(running, running_on, index, limit, below=first_bad)
+    return out
 
 
 async def find_image(build, row):
@@ -414,6 +495,7 @@ async def install(dev, target, image, started):
                 ok=False,
             )
             return
+        record_success(status["model"], target["build"])
         fresh = db.get_device(device_id)
         _, created = await backups.take(fresh, "post-change")
         db.add_event(
