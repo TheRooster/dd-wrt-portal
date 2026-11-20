@@ -41,7 +41,7 @@ class Field:
     keys: tuple  # the portal keys this field is stored in
     help: str = ""
     band: str = ""
-    per_device: bool = False
+    per_device: bool = False  # unique per router unless the user makes it shared
 
 
 _REBOOT_KEYS = ("schedule_hour_time", "schedule_hours", "schedule_minutes", "schedule_weekdays")
@@ -65,8 +65,6 @@ FIELDS = [
     Field("channel_24", "2.4 GHz channel", "Channels", "channel", ("wifi24.channel",), band="2.4", per_device=True),
 ]
 BY_KEY = {f.key: f for f in FIELDS}
-FLEET_FIELDS = [f for f in FIELDS if not f.per_device]
-DEVICE_FIELDS = [f for f in FIELDS if f.per_device]
 FIELD_PORTAL_KEYS = [k for f in FIELDS for k in f.keys]
 _OWNED = frozenset(FIELD_PORTAL_KEYS)
 
@@ -288,7 +286,7 @@ def read(current, mapping):
 def resolve(fleet, overrides, plain, current, mapping):
     """Work out what the managed settings mean for one router.
 
-    `fleet` and `overrides` hold named-field values; `plain` holds
+    `fleet` and `overrides` hold named-field values (an override wins); `plain` holds
     {portal key: value} for other managed settings. Returns (wanted,
     unsupported): the nvram keys to pin with their values, and the labels of
     managed settings this router has no place for. Unsupported settings are
@@ -296,7 +294,7 @@ def resolve(fleet, overrides, plain, current, mapping):
     """
     wanted, unsupported = {}, []
     for field in FIELDS:
-        value = (overrides if field.per_device else fleet).get(field.key)
+        value = overrides.get(field.key, fleet.get(field.key))
         if value is None:
             continue
         written = encode(field, value, current, mapping)

@@ -234,8 +234,11 @@ def assess(running, running_on, target, limit=None):
         result["blocked"] = f"The router already runs r{running}."
     elif running and target["build"] < running:
         result["warnings"].append(
-            f"r{target['build']} is older than the running r{running}. Downgrading can leave settings "
-            "the older build does not understand."
+            f"r{target['build']} is older than the running r{running}. Rolling back to an earlier build "
+            "without an NVRAM wipe is dangerous: the settings are kept, and the older build can misread "
+            "settings written by the newer one, leaving the router unstable, unreachable or unable to boot. "
+            "If it misbehaves afterwards, the fix is a factory reset (NVRAM wipe) and setting it up again, "
+            "after which the portal must re-enrol it, because the wipe also removes its SSH key."
         )
     elif gap is None:
         result["warnings"].append(

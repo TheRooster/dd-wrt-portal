@@ -176,7 +176,7 @@ def record_poll(device_id, status=None, error=None):
 def delete_device(device_id):
     with connect() as conn:
         conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-        conn.execute("DELETE FROM managed WHERE scope = ?", (f"device:{device_id}",))
+        conn.execute("DELETE FROM managed WHERE scope IN (?, ?)", (f"device:{device_id}", f"deviceplain:{device_id}"))
 
 
 # --- backups ---------------------------------------------------------------

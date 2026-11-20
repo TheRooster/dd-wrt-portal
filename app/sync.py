@@ -9,6 +9,11 @@ PLAIN = "plain"  # other managed settings, by portal key
 FLAGS = "flags"
 SAME_PASSPHRASE = "passphrase_24_same"  # 2.4 GHz uses the 5 GHz passphrase
 RADIO = "radio:"  # keymap rows "radio:2.4" / "radio:5" hold a radio prefix
+UNIQUE = "unique"  # {"field:<key>" or "plain:<portal key>": "1" unique per router, "0" shared}
+
+
+def _device_plain_scope(device_id):
+    return f"deviceplain:{device_id}"
 
 
 def _scope(device_id):
@@ -45,15 +50,106 @@ def same_passphrase():
     return db.get_managed(FLAGS).get(SAME_PASSPHRASE) == "1"
 
 
+# --- which settings are unique per router -------------------------------------------
+
+
+def unique_fields():
+    """Named fields set per router. Channels are, until someone says otherwise."""
+    stored = db.get_managed(UNIQUE)
+    return {
+        f.key for f in profile.FIELDS
+        if stored.get(f"field:{f.key}", "1" if f.per_device else "0") == "1"
+    }
+
+
+def unique_plain():
+    """Plain settings set per router."""
+    return {k[len("plain:"):] for k, v in db.get_managed(UNIQUE).items() if k.startswith("plain:") and v == "1"}
+
+
+def _save_unique(fields, plain_keys):
+    rows = {f"field:{f.key}": "1" if f.key in fields else "0" for f in profile.FIELDS}
+    rows |= {f"plain:{k}": "1" for k in plain_keys}
+    db.set_managed(UNIQUE, rows)
+
+
+def set_unique(fields, plain_keys, devices):
+    """Make exactly `fields` and `plain_keys` unique per router; returns notes for the user.
+
+    A setting that becomes unique starts with the shared value on every
+    router, so nothing changes in effect. One that becomes shared keeps the
+    routers' value if they all agree, and is left unmanaged if they do not.
+    """
+    fields, plain_keys = set(fields), set(plain_keys)
+    was_fields, was_plain = unique_fields(), unique_plain()
+    notes = []
+    shared_named, same = _load(FLEET), same_passphrase()
+    shared_plain = plain()
+    per_named = {d["id"]: overrides(d["id"]) for d in devices}
+    per_plain = {d["id"]: device_plain(d["id"]) for d in devices}
+
+    for key in fields - was_fields:
+        value = shared_named.pop(key, None)
+        if key == "passphrase_24" and same:
+            value, same = shared_named.get("passphrase_5"), False
+        for values in per_named.values():
+            values.pop(key, None)
+            if value is not None:
+                values[key] = value
+    for key in was_fields - fields:
+        found = {v[key] for v in per_named.values() if key in v}
+        for values in per_named.values():
+            values.pop(key, None)
+        if len(found) == 1:
+            shared_named[key] = found.pop()
+        elif found:
+            notes.append(f"{profile.BY_KEY[key].label} differed between routers, so it is no longer managed.")
+    for key in plain_keys - was_plain:
+        value = shared_plain.pop(key, None)
+        for values in per_plain.values():
+            values.pop(key, None)
+            if value is not None:
+                values[key] = value
+    for key in was_plain - plain_keys:
+        found = {v[key] for v in per_plain.values() if key in v}
+        for values in per_plain.values():
+            values.pop(key, None)
+        if len(found) == 1:
+            shared_plain[key] = found.pop()
+        else:
+            notes.append(f"{key} differed between routers, so it is no longer managed.")
+
+    save_fleet(shared_named, same)
+    save_plain(shared_plain)
+    for d in devices:
+        save_overrides(d["id"], per_named[d["id"]])
+        save_device_plain(d["id"], per_plain[d["id"]])
+    _save_unique(fields, plain_keys)
+    return notes
+
+
+def stop_unique_plain(key, devices):
+    """Stop managing a per-router plain setting on every router."""
+    for d in devices:
+        values = device_plain(d["id"])
+        if values.pop(key, None) is not None:
+            save_device_plain(d["id"], values)
+    _save_unique(unique_fields(), unique_plain() - {key})
+
+
 def stored_fleet():
-    """Named fleet values exactly as saved."""
-    return _load(FLEET)
+    """Shared named values exactly as saved."""
+    unique = unique_fields()
+    return {k: v for k, v in _load(FLEET).items() if k not in unique}
 
 
-def fleet():
-    """Named fleet values in effect, with "same as 5 GHz" filled in."""
-    values = _load(FLEET)
-    if same_passphrase():
+def named(device_id):
+    """The named values in effect on one router: shared ones, its own unique ones,
+    and "same as 5 GHz" filled in."""
+    unique = unique_fields()
+    values = {k: v for k, v in _load(FLEET).items() if k not in unique}
+    values |= {k: v for k, v in overrides(device_id).items() if k in unique}
+    if same_passphrase() and "passphrase_24" not in unique:
         values.pop("passphrase_24", None)
         if "passphrase_5" in values:
             values["passphrase_24"] = values["passphrase_5"]
@@ -68,7 +164,29 @@ def save_fleet(values, same):
 
 
 def plain():
-    return db.get_managed(PLAIN)
+    """Shared plain values."""
+    unique = unique_plain()
+    return {k: v for k, v in db.get_managed(PLAIN).items() if k not in unique}
+
+
+def device_plain(device_id):
+    """One router's own values for plain settings that are unique per router."""
+    unique = unique_plain()
+    return {k: v for k, v in db.get_managed(_device_plain_scope(device_id)).items() if k in unique}
+
+
+def save_device_plain(device_id, values):
+    db.set_managed(_device_plain_scope(device_id), values)
+
+
+def plain_keys():
+    """Every plain setting the portal manages, shared or unique."""
+    return sorted(set(plain()) | unique_plain())
+
+
+def plain_for(device_id):
+    """The plain values in effect on one router."""
+    return plain() | device_plain(device_id)
 
 
 def save_plain(values):
@@ -84,7 +202,7 @@ def save_overrides(device_id, values):
 
 
 def anything_managed(devices):
-    return bool(_load(FLEET) or plain() or any(overrides(d["id"]) for d in devices))
+    return bool(stored_fleet() or plain() or any(named(d["id"]) or device_plain(d["id"]) for d in devices))
 
 
 # --- per-router state -------------------------------------------------------------
@@ -129,9 +247,7 @@ def plan(dev, settings=None):
     settings = settings if settings is not None else current(dev)
     if settings is None:
         return None
-    wanted, unsupported = profile.resolve(
-        fleet(), overrides(dev["id"]), plain(), settings, mapping(dev, settings)
-    )
+    wanted, unsupported = profile.resolve(named(dev["id"]), {}, plain_for(dev["id"]), settings, mapping(dev, settings))
     return Plan(wanted, nvram.diff({k: settings[k] for k in wanted}, wanted), unsupported)
 
 

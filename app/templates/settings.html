@@ -3,12 +3,40 @@
 {% macro name(d) %}{{ (d.status.name if d.status else none) or d.host }}{% endmacro %}
 {% macro now(field, d) %}
   {%- set v = d.read.get(field.key) -%}
-  {%- set want = (d.overrides if field.per_device else effective).get(field.key) -%}
+  {%- set want = d.named.get(field.key) -%}
   {%- if field.key in d.unsupported_fields -%}
   <td class="{{ 'unsupported' if want is not none else 'dim' }}">Not supported</td>
   {%- else -%}
   <td class="{{ 'differs' if want is not none and v != want else '' }}">{{ display(field, v) }}</td>
   {%- endif -%}
+{%- endmacro %}
+{#- One input for a named field. `id` names the form field; `value` is the managed value. -#}
+{% macro field_input(f, id, value, label) %}
+  {%- if f.kind == "onoff" -%}
+    <select id="{{ id }}" name="{{ id }}" aria-label="{{ label }}">
+      <option value="">Not managed</option>
+      <option value="1" {{ "selected" if value == "1" }}>On</option>
+      <option value="0" {{ "selected" if value == "0" }}>Off</option>
+    </select>
+  {%- elif f.kind == "channel" -%}
+    <select id="{{ id }}" name="{{ id }}" aria-label="{{ label }}">
+      <option value="">Not managed</option>
+      {% for c in channels[f.band] %}
+      <option value="{{ c }}" {{ "selected" if value == c|string }}>{{ c }}{{ " (DFS)" if c in dfs }}</option>
+      {% endfor %}
+    </select>
+  {%- elif f.kind == "secret" -%}
+    <input id="{{ id }}" name="{{ id }}" type="password" autocomplete="new-password" aria-label="{{ label }}"
+           placeholder="{{ 'Managed; leave blank to keep' if value is not none else 'Not managed' }}">
+    {% if value is not none %}<label class="inline"><input type="checkbox" name="stop_{{ id }}" value="1"> Stop managing</label>{% endif %}
+  {%- elif f.kind == "time" -%}
+    <input id="{{ id }}" name="{{ id }}" type="time" value="{{ value or '' }}" aria-label="{{ label }}">
+  {%- else -%}
+    <input id="{{ id }}" name="{{ id }}" value="{{ value or '' }}" placeholder="Not managed" aria-label="{{ label }}">
+  {%- endif -%}
+{%- endmacro %}
+{% macro unique_box(kind, key, checked) %}
+  <label class="inline hint"><input type="checkbox" class="unique-toggle" name="unique__{{ kind }}__{{ key }}" value="1" {{ "checked" if checked }}> Unique per router</label>
 {%- endmacro %}
 {% block main %}
   <div class="page-head">
@@ -55,27 +83,13 @@
           <tr class="group"><th colspan="{{ 2 + devices|length }}">{{ group }}</th></tr>
           {% for f in fields %}
           <tr>
-            <td><label for="{{ f.key }}">{{ f.label }}</label>{% if f.help %}<div class="hint">{{ f.help }}</div>{% endif %}</td>
+            <td><label for="{{ f.key }}">{{ f.label }}</label>{% if f.help %}<div class="hint">{{ f.help }}</div>{% endif %}<div>{{ unique_box("field", f.key, false) }}</div></td>
             <td>
-              {% if f.kind == "onoff" %}
-                <select id="{{ f.key }}" name="{{ f.key }}">
-                  <option value="">Not managed</option>
-                  <option value="1" {{ "selected" if fleet.get(f.key) == "1" }}>On</option>
-                  <option value="0" {{ "selected" if fleet.get(f.key) == "0" }}>Off</option>
-                </select>
-              {% elif f.kind == "secret" %}
-                {% if f.key == "passphrase_24" %}
+              {% if f.key == "passphrase_24" %}
                 <label class="inline"><input type="checkbox" id="same" name="passphrase_24_same" value="1" {{ "checked" if same_passphrase }}> Same as 5 GHz</label>
-                {% endif %}
-                <div {% if f.key == "passphrase_24" %}id="own-24"{% endif %}>
-                  <input id="{{ f.key }}" name="{{ f.key }}" type="password" autocomplete="new-password"
-                         placeholder="{{ 'Managed; leave blank to keep' if f.key in fleet else 'Not managed' }}">
-                  {% if f.key in fleet %}<label class="inline"><input type="checkbox" name="stop_{{ f.key }}" value="1"> Stop managing</label>{% endif %}
-                </div>
-              {% elif f.kind == "time" %}
-                <input id="{{ f.key }}" name="{{ f.key }}" type="time" value="{{ fleet.get(f.key, '') }}">
+                <div id="own-24">{{ field_input(f, f.key, fleet.get(f.key), f.label) }}</div>
               {% else %}
-                <input id="{{ f.key }}" name="{{ f.key }}" value="{{ fleet.get(f.key, '') }}" placeholder="Not managed">
+                {{ field_input(f, f.key, fleet.get(f.key), f.label) }}
               {% endif %}
             </td>
             {% for d in devices %}{{ now(f, d) }}{% endfor %}
@@ -86,7 +100,7 @@
           <tr class="group"><th colspan="{{ 2 + devices|length }}">Other settings</th></tr>
           {% for key, want in plain.items() %}
           <tr>
-            <td><label for="plain__{{ key }}" class="mono">{{ key }}</label></td>
+            <td><label for="plain__{{ key }}" class="mono">{{ key }}</label><div>{{ unique_box("plain", key, false) }}</div></td>
             <td>
               <input id="plain__{{ key }}" name="plain__{{ key }}" value="{{ want }}" placeholder="(empty)">
               <label class="inline"><input type="checkbox" name="stopplain__{{ key }}" value="1"> Stop managing</label>
@@ -94,7 +108,7 @@
             {% for d in devices %}
               {% set v = d.plain_now.get(key) %}
               {% if v is none %}<td class="unsupported">Not supported</td>
-              {% else %}<td class="{{ 'differs' if v != want else '' }}">{{ v if v != "" else "(empty)" }}</td>{% endif %}
+              {% else %}<td class="{{ 'differs' if v != d.plain_want.get(key) else '' }}">{{ v if v != "" else "(empty)" }}</td>{% endif %}
             {% endfor %}
           </tr>
           {% endfor %}
@@ -103,35 +117,54 @@
       </table>
     </div>
 
-    <h3>Channels</h3>
-    <p class="hint">Set per router, because neighbouring access points should not share a channel.</p>
-    {% if devices %}
+    <h3>Router unique settings</h3>
+    <p class="hint">Set separately on each router, such as channels, which neighbouring access points should not share. Tick "Unique per router" on any setting above to move it here; untick it here to share it again. A router left at "Not managed" is not touched for that setting.</p>
+    {% if devices and (unique_fields or unique_plain) %}
     <div class="panel flush scroll">
       <table class="list managed">
-        <thead><tr><th>Router</th>{% for f in device_fields %}<th>{{ f.label }}</th><th>Now</th>{% endfor %}</tr></thead>
+        <thead><tr><th>Setting</th>{% for d in devices %}<th>{{ name(d) }}</th>{% endfor %}</tr></thead>
         <tbody>
-        {% for d in devices %}
+        {% for f in unique_fields %}
           <tr>
-            <td>{{ name(d) }}</td>
-            {% for f in device_fields %}
+            <td>{{ f.label }}{% if f.help %}<div class="hint">{{ f.help }}</div>{% endif %}<div>{{ unique_box("field", f.key, true) }}</div></td>
+            {% for d in devices %}
             <td>
-              <select name="{{ f.key }}__{{ d.id }}" aria-label="{{ f.label }} for {{ name(d) }}">
-                <option value="">Not managed</option>
-                {% for c in channels[f.band] %}
-                <option value="{{ c }}" {{ "selected" if d.overrides.get(f.key) == c|string }}>{{ c }}{{ " (DFS)" if c in dfs }}</option>
-                {% endfor %}
-              </select>
+              {% if f.key in d.unsupported_fields %}<span class="dim">Not supported</span>
+              {% else %}
+                {{ field_input(f, f.key ~ "__" ~ d.id, d.own.get(f.key), f.label ~ " for " ~ name(d)) }}
+                {% set v = d.read.get(f.key) %}{% set want = d.named.get(f.key) %}
+                <div class="hint {{ 'differs' if want is not none and v != want else '' }}">Now: {{ display(f, v) }}</div>
+              {% endif %}
             </td>
-            {{ now(f, d) }}
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        {% for key in unique_plain %}
+          <tr>
+            <td><span class="mono">{{ key }}</span><div>{{ unique_box("plain", key, true) }}</div>
+              <label class="inline hint"><input type="checkbox" name="stopplain__{{ key }}" value="1"> Stop managing</label></td>
+            {% for d in devices %}
+            {% set v = d.plain_now.get(key) %}
+            <td>
+              {% if v is none %}<span class="dim">Not supported</span>
+              {% else %}
+                <input name="plainu__{{ key }}__{{ d.id }}" value="{{ d.own_plain.get(key, '') }}" placeholder="Not managed" aria-label="{{ key }} for {{ name(d) }}">
+                {% set want = d.own_plain.get(key) %}
+                <div class="hint {{ 'differs' if want is not none and v != want else '' }}">Now: {{ v if v != "" else "(empty)" }}</div>
+              {% endif %}
+            </td>
             {% endfor %}
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
+    {% elif devices %}
+    <p class="dim">No setting is unique per router.</p>
     {% else %}
     <p class="dim">No routers enrolled yet.</p>
     {% endif %}
+    <input type="hidden" name="layout" value="1">
 
     <p class="confirm-row"><button>Save managed settings</button><span class="hint">Saving does not change any router.</span></p>
   </form>
@@ -139,7 +172,7 @@
   {% if devices %}
   <section class="panel">
     <h2>Start from what the routers have now</h2>
-    <p class="hint">Manages every named setting above at its current value on one router, and each router's own current channels. Replaces those managed values; changes nothing on the routers.</p>
+    <p class="hint">Manages every shared setting above at its current value on one router, and each router's own current value for its router unique settings. Replaces those managed values; changes nothing on the routers.</p>
     <form method="post" action="/settings/adopt" class="enroll">
       <label>Take shared settings from
         <select name="device_id">
@@ -189,6 +222,10 @@
     const toggle = () => { own.hidden = same.checked; };
     same.addEventListener("change", toggle);
     toggle();
+  }
+  // Ticking or unticking "Unique per router" saves the form, which moves the row.
+  for (const box of document.querySelectorAll(".unique-toggle")) {
+    box.addEventListener("change", () => box.form.requestSubmit());
   }
   const table = document.getElementById("shared-table");
   if (table) {

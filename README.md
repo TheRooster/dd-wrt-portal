@@ -42,11 +42,17 @@ name for any setting it calls something else. `app/profile.py` holds this.
 The Managed settings page has:
 
 - named settings the portal understands (network names, a passphrase per
-  band with "Same as 5 GHz", time, access, logging, reboot schedule) and a
-  channel per router and band;
+  band with "Same as 5 GHz", time, access, logging, reboot schedule,
+  channels);
 - every other setting that all routers share, any of which can be managed as
   a plain value. Secrets, hardware details, per-router identity, and radio
   settings known to be chipset-specific are not offered.
+
+Every row has a "Unique per router" box. Ticking it moves the row to
+Router unique settings, where each router gets its own value; channels start
+there. A setting made unique starts with its shared value on every router.
+One made shared again keeps the routers' value if they all agree and is left
+unmanaged if they do not.
 
 A setting left blank is not managed and is never touched. A managed setting a
 router has no place for is flagged as not supported on that router and is
@@ -67,7 +73,11 @@ no checksums, so images are trusted only as far as the HTTPS download.
 
 Installing is done one build at a time. Enter the build to install; the page
 suggests the newest build published within `FIRMWARE_MAX_JUMP_DAYS` of the
-running one. A larger jump, or a downgrade, needs an extra confirmation. The
+running one. A larger jump, or a downgrade, needs an extra confirmation.
+Any published build can be entered, older ones included, so an unstable
+build can be rolled back even on a router that is up to date. A rollback
+keeps the settings (no NVRAM wipe), which the confirmation warns is
+dangerous: the older build can misread settings the newer one wrote. The
 install backs up the settings, downloads the image, copies it to the router's
 RAM disk, checksums it there, and runs DD-WRT's `write <image> linux`. The
 router reboots only if the write succeeds, and the portal then confirms the

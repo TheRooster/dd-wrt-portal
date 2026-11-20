@@ -62,7 +62,6 @@
             {% if d.busy %}<span class="flag">{{ d.busy }}…</span>
             {% elif f.status not in ("available", "current", "end_of_life") %}<span class="dim">Choose the image first</span>
             {% elif not d.online %}<span class="dim">Router offline</span>
-            {% elif not d.newer %}<span class="dim">No newer build</span>
             {% else %}
               <form method="get" action="/devices/{{ d.id }}/firmware/install" class="match">
                 <label>Build
@@ -70,8 +69,9 @@
                 </label>
                 <button class="secondary">Review…</button>
               </form>
-              <datalist id="builds-{{ d.id }}">{% for b in d.newer %}<option value="{{ b.build }}">{{ b.date }}</option>{% endfor %}</datalist>
-              {% if d.next %}<div class="hint">Suggested: r{{ d.next.build }}, published {{ d.next.date }}.</div>{% endif %}
+              <datalist id="builds-{{ d.id }}">{% for b in d.choices %}<option value="{{ b.build }}">{{ b.date }}</option>{% endfor %}</datalist>
+              {% if d.next %}<div class="hint">Suggested: r{{ d.next.build }}, published {{ d.next.date }}.</div>
+              {% elif not d.newer %}<div class="hint">No newer build. To roll back an unstable build, enter an older one; rolling back without an NVRAM wipe is dangerous, and the next page explains why.</div>{% endif %}
               {% if d.failed_from %}<div class="hint bad-text">r{{ d.failed_from }} did not boot on this model. Builds from r{{ d.failed_from }} on are not suggested.</div>{% endif %}
               {% if d.bisecting %}<div class="hint">r{{ d.good }} is the newest build known to boot on this model. r{{ d.next.build }} is midway to r{{ d.failed_from }}; each install halves the builds left to test.</div>
               {% elif d.end_of_life %}<div class="hint bad-text">End of life: r{{ d.good }} boots and r{{ d.failed_from }}, the next published build, does not. Builds above r{{ d.failed_from }} can still be entered by hand; once one installs and boots, suggestions resume from it.</div>

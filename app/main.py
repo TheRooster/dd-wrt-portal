@@ -612,7 +612,7 @@ def _known(devices):
 
 def _shared(known):
     """Plain settings every router has and the portal is not managing yet."""
-    managed = sync.plain()
+    managed = set(sync.plain_keys())
     table = profile.shared([(settings, mapping) for _, settings, mapping in known])
     return {k: v for k, v in table.items() if k not in managed}
 
@@ -620,25 +620,28 @@ def _shared(known):
 @app.get("/settings")
 async def settings_page(request: Request, msg: str = "", err: str = ""):
     ctx = _context()
-    plain = sync.plain()
+    unique_fields, unique_plain = sync.unique_fields(), sync.unique_plain()
+    plain_keys = sync.plain_keys()
     for d in ctx["devices"]:
         d["read"], d["unsupported_fields"], d["plain_now"] = {}, set(), {}
-        d["overrides"] = sync.overrides(d["id"])
+        d["named"], d["own"] = sync.named(d["id"]), sync.overrides(d["id"])
+        d["own_plain"], d["plain_want"] = sync.device_plain(d["id"]), sync.plain_for(d["id"])
     known = _known(ctx["devices"])
     for d, settings, mapping in known:
         d["read"] = profile.read(settings, mapping)
         d["unsupported_fields"] = {f.key for f in profile.FIELDS if not profile.supported(f, settings, mapping)}
-        d["plain_now"] = {k: settings.get(mapping.device_key(k) or "") for k in plain}
+        d["plain_now"] = {k: settings.get(mapping.device_key(k) or "") for k in plain_keys}
     groups = {}
-    for field in profile.FLEET_FIELDS:
-        groups.setdefault(field.group, []).append(field)
+    for field in profile.FIELDS:
+        if field.key not in unique_fields:
+            groups.setdefault(field.group, []).append(field)
     ctx |= {
         "fleet": sync.stored_fleet(),
-        "effective": sync.fleet(),
-        "same_passphrase": sync.same_passphrase(),
-        "plain": plain,
+        "same_passphrase": sync.same_passphrase() and "passphrase_24" not in unique_fields,
+        "plain": sync.plain(),
         "groups": groups,
-        "device_fields": profile.DEVICE_FIELDS,
+        "unique_fields": [f for f in profile.FIELDS if f.key in unique_fields],
+        "unique_plain": sorted(unique_plain),
         "display": profile.display,
         "channels": {"2.4": profile.CHANNELS_24, "5": profile.CHANNELS_5},
         "dfs": profile.DFS_CHANNELS,
@@ -650,41 +653,75 @@ async def settings_page(request: Request, msg: str = "", err: str = ""):
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
+def _named_value(field, raw, old, stop):
+    """A submitted named-field value: (keep, value). Blank secrets keep the stored one."""
+    if field.kind == "secret":
+        if stop:
+            return False, None
+        if raw:
+            return True, profile.validate(field, raw)
+        return (field.key in old), old.get(field.key)
+    if raw.strip():
+        return True, profile.validate(field, raw)
+    return False, None
+
+
 @app.post("/settings")
 async def save_settings(request: Request):
     form = await request.form()
+    devices = db.list_devices()
+    unique_fields, unique_plain = sync.unique_fields(), sync.unique_plain()
     old = sync.stored_fleet()
-    same = bool(form.get(sync.SAME_PASSPHRASE))
-    fleet, plain, per_device = {}, {}, {}
+    same = bool(form.get(sync.SAME_PASSPHRASE)) and "passphrase_24" not in unique_fields
+    fleet, plain, per_named, per_plain = {}, {}, {}, {}
+    stopped_unique = {k for k in unique_plain if form.get(f"stopplain__{k}")}
     try:
-        for field in profile.FLEET_FIELDS:
-            raw = str(form.get(field.key, ""))
-            if field.kind == "secret":
-                if form.get(f"stop_{field.key}") or (field.key == "passphrase_24" and same):
-                    continue
-                if raw:
-                    fleet[field.key] = profile.validate(field, raw)
-                elif field.key in old:
-                    fleet[field.key] = old[field.key]
-            elif raw.strip():
-                fleet[field.key] = profile.validate(field, raw)
+        for field in profile.FIELDS:
+            if field.key in unique_fields or (field.key == "passphrase_24" and same):
+                continue
+            keep, value = _named_value(field, str(form.get(field.key, "")), old, form.get(f"stop_{field.key}"))
+            if keep:
+                fleet[field.key] = value
         for key in sync.plain():
             if not form.get(f"stopplain__{key}"):
                 plain[key] = profile.validate_plain(key, str(form.get(f"plain__{key}", "")))
-        for dev in db.list_devices():
-            values = {}
-            for field in profile.DEVICE_FIELDS:
-                raw = str(form.get(f"{field.key}__{dev['id']}", "")).strip()
-                if raw:
-                    values[field.key] = profile.validate(field, raw)
-            per_device[dev["id"]] = values
+        for dev in devices:
+            own, values = sync.overrides(dev["id"]), {}
+            for field in profile.FIELDS:
+                if field.key not in unique_fields:
+                    continue
+                keep, value = _named_value(
+                    field, str(form.get(f"{field.key}__{dev['id']}", "")), own,
+                    form.get(f"stop_{field.key}__{dev['id']}"),
+                )
+                if keep:
+                    values[field.key] = value
+            per_named[dev["id"]] = values
+            own_plain = {}
+            for key in unique_plain - stopped_unique:
+                raw = str(form.get(f"plainu__{key}__{dev['id']}", ""))
+                if raw != "":
+                    own_plain[key] = profile.validate_plain(key, raw)
+            per_plain[dev["id"]] = own_plain
     except ValueError as exc:
         return _back("/settings", err=f"Nothing was saved. {exc}")
     sync.save_fleet(fleet, same)
     sync.save_plain(plain)
-    for device_id, values in per_device.items():
-        sync.save_overrides(device_id, values)
-    return _back("/settings", msg="Managed settings saved. Nothing has been changed on the routers yet.")
+    for dev in devices:
+        sync.save_overrides(dev["id"], per_named[dev["id"]])
+        sync.save_device_plain(dev["id"], per_plain[dev["id"]])
+    for key in stopped_unique:
+        sync.stop_unique_plain(key, devices)
+    notes = []
+    if form.get("layout"):
+        # The "Unique per router" boxes: rows that changed sides move after the values are saved.
+        fields = {f.key for f in profile.FIELDS if form.get(f"unique__field__{f.key}")}
+        keys = {k for k in sync.plain_keys() if form.get(f"unique__plain__{k}")}
+        notes = sync.set_unique(fields, keys, devices)
+    return _back(
+        "/settings",
+        msg=" ".join(["Managed settings saved. Nothing has been changed on the routers yet.", *notes]),
+    )
 
 
 @app.post("/settings/manage")
@@ -702,34 +739,42 @@ async def manage_setting(key: str = Form(...), value: str = Form("")):
 
 @app.post("/settings/adopt")
 async def adopt_settings(device_id: int = Form(...)):
-    """Start managing every named setting at the value it has now, taking shared ones from one router."""
+    """Manage every named setting at its current value: shared ones from one router,
+    unique ones from each router itself."""
     source = _device_or_404(device_id)
     settings = sync.current(source)
     if settings is None:
         return _back("/settings", err=f"The settings of {_label(source)} are not known yet.")
+    unique_fields, unique_plain = sync.unique_fields(), sync.unique_plain()
 
-    def valid(fields, values):
+    def valid(values, unique):
         kept = {}
-        for field in fields:
+        for field in profile.FIELDS:
             value = values.get(field.key)
-            if value:
+            if value and (field.key in unique_fields) == unique:
                 try:
                     kept[field.key] = profile.validate(field, value)
                 except ValueError:
                     pass
         return kept
 
-    fleet = valid(profile.FLEET_FIELDS, profile.read(settings, sync.mapping(source, settings)))
+    fleet = valid(profile.read(settings, sync.mapping(source, settings)), unique=False)
     same = "passphrase_5" in fleet and fleet.get("passphrase_24") == fleet["passphrase_5"]
     if same:
         del fleet["passphrase_24"]
     sync.save_fleet(fleet, same)
     for dev, own, mapping in _known(db.list_devices()):
-        sync.save_overrides(dev["id"], valid(profile.DEVICE_FIELDS, profile.read(own, mapping)))
+        sync.save_overrides(dev["id"], valid(profile.read(own, mapping), unique=True))
+        values = {}
+        for key in unique_plain:
+            device_key = mapping.device_key(key)
+            if device_key in own:
+                values[key] = own[device_key]
+        sync.save_device_plain(dev["id"], values)
     return _back(
         "/settings",
-        msg=f"Now managing the current settings of {_label(source)}, and each router's current channels. "
-        "Nothing has been changed on the routers.",
+        msg=f"Now managing the current settings of {_label(source)}, and each router's current values for "
+        "its router unique settings. Nothing has been changed on the routers.",
     )
 
 
@@ -739,11 +784,11 @@ async def adopt_settings(device_id: int = Form(...)):
 def _mapping_rows(dev, settings, mapping):
     """One row per portal key the portal understands or manages, resolved for this router."""
     labels = {k: f.label for f in profile.FIELDS for k in f.keys}
-    managed = set(sync.plain())
-    values = sync.fleet() | sync.overrides(dev["id"])
+    managed = set(sync.plain_keys())
+    values = sync.named(dev["id"])
     managed |= {k for f in profile.FIELDS if f.key in values for k in f.keys}
     rows = []
-    for key in dict.fromkeys(profile.FIELD_PORTAL_KEYS + sorted(sync.plain())):
+    for key in dict.fromkeys(profile.FIELD_PORTAL_KEYS + sync.plain_keys()):
         resolved = mapping.device_key(key)
         rows.append(
             {
@@ -805,7 +850,7 @@ async def save_mapping(request: Request, device_id: int):
         if prefix:
             radios[band] = prefix
     aliases = {}
-    for key in dict.fromkeys(profile.FIELD_PORTAL_KEYS + sorted(sync.plain())):
+    for key in dict.fromkeys(profile.FIELD_PORTAL_KEYS + sync.plain_keys()):
         alias = str(form.get(f"alias__{key}", "")).strip()
         if alias and alias not in settings:
             return _back(here, err=f"This router has no setting named {alias}.")
@@ -948,6 +993,8 @@ async def firmware_page(request: Request, msg: str = "", err: str = ""):
         d["end_of_life"] = plan["end_of_life"]
         d["next"] = plan["next"]
         d["newer"] = [b for b in index if build and b["build"] > build]
+        # Any published build can be chosen, older ones included, to roll back an unstable build.
+        d["choices"] = [b for b in reversed(index) if b["build"] != build]
         d["fw_event"] = next((e for e in db.list_events(d["id"], 10) if e["message"].startswith("Firmware")), None)
     ctx |= {
         "latest": info, "check_hours": config.FIRMWARE_CHECK_HOURS, "msg": msg, "err": err,
